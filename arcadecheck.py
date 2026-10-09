@@ -1488,6 +1488,18 @@ def self_test():
     check(args.portal is None and args.token is None and args.out is None,
           "and no portal, token or output file is assumed")
     check(_parse(["--apply"]).apply is True, "--apply is read")
+
+    def parse_prefix():
+        try:
+            _parse(["--ap"])
+        except SystemExit as exc:
+            return exc.code
+        return None
+
+    prefix_code, prefix_out = capture(parse_prefix)
+    check(prefix_code == 2 and "--ap" in prefix_out,
+          "a unique prefix of --apply, --ap, is refused rather than read as "
+          "--apply, so a typo cannot write a file  <-- pinned defect")
     check(_parse(["--insecure"]).insecure is True, "--insecure is read")
     check(_parse(["--self-test"]).self_test is True, "--self-test is read")
     check(_parse(["--all"]).show_all is True, "--all is read")
@@ -1980,6 +1992,7 @@ def _parse(argv):
                     "ones can leave with you.",
         epilog="Attribute rules are read from gdbxray --json output, not from "
                "the geodatabase. Nothing is written without --apply.",
+        allow_abbrev=False,
     )
     parser.add_argument("files", nargs="*", metavar="FILE",
                         help="web map, dashboard, form or gdbxray --json "

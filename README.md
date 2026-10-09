@@ -58,6 +58,9 @@ PASS  the layer name inside the rule is the guid the geodatabase stored, not the
 ...
 PASS  --apply is off by default, so nothing is written  <-- pinned defect
 PASS  --insecure is off by default, so tls is verified  <-- pinned defect
+...
+PASS  a unique prefix of --apply, --ap, is refused rather than read as --apply, so a typo cannot write a file  <-- pinned defect
+...
 PASS  there is no --password at all, because argv is readable by every process on the box  <-- pinned defect
 PASS  a portal url with no scheme is refused before any request is made, because urllib would quote the token back  <-- pinned defect
 PASS  and that mark is read as a mark rather than as the first character of broken json  <-- pinned defect
@@ -76,7 +79,7 @@ PASS  and no credential reaches the csv on disk  <-- pinned defect
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
 PASS  the harness records a false check, a missing exception and a wrong exception as three failures, so a broken tool turns this self-test red  <-- pinned defect
 --------------------------------------------------------------------
-372 assertions, 0 failed
+373 assertions, 0 failed
 ```
 
 ## Requirements
@@ -249,7 +252,7 @@ failed.
 
 ## Verification
 
-`--self-test` is 372 assertions with no network, no portal and no geodatabase. It runs green on
+`--self-test` is 373 assertions with no network, no portal and no geodatabase. It runs green on
 Windows under `python 3.13`, on Ubuntu under `python 3.12`, on ArcGIS Pro's `python 3.13` and on
 a plain `python 3.9`, with the same count and the same transcript line for line. Branch coverage
 is 99%. What is left is three things that cannot run in a
