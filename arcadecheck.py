@@ -628,13 +628,20 @@ def collect_rules(doc, source=""):
     return records
 
 
-def count_rules(doc):
-    """How many rule objects a gdbxray report carries, whatever they hold."""
+def count_rules(doc, with_expression=None):
+    """How many rule objects a gdbxray report carries, whatever they hold.
+
+    with_expression=False counts only the rule objects whose "expression" is
+    not text. gdbxray always writes that key as text, so such a rule means the
+    report was edited or its schema moved on.
+    """
     total = 0
     for dataset in doc.get("datasets"):
         if isinstance(dataset, dict) and isinstance(dataset.get("rules"), list):
             total += sum(1 for rule in dataset["rules"]
-                         if isinstance(rule, dict))
+                         if isinstance(rule, dict)
+                         and (with_expression is None or with_expression
+                              == isinstance(rule.get("expression"), str)))
     return total
 
 
@@ -651,11 +658,18 @@ def unreadable(doc, records):
     if kind == "rules":
         stated = doc["counts"]["rules"]
         seen = count_rules(doc)
-        if (isinstance(stated, int) and not isinstance(stated, bool)
-                and stated != seen):
+        if not isinstance(stated, int) or isinstance(stated, bool):
+            return ("has a rule count that is not a whole number, so it "
+                    "cannot be checked against the rules read")
+        if stated != seen:
             return ("says it holds %d attribute rules but %d were read from "
                     "its datasets, so its shape is not the one this tool "
                     "reads" % (stated, seen))
+        bare = count_rules(doc, with_expression=False)
+        if bare:
+            return ("holds %d attribute rule(s) with no text under the "
+                    "expression key, so its shape is not the one this tool "
+                    "reads" % bare)
         return ""
     if kind != "json" or records:
         return ""
@@ -939,7 +953,7 @@ RULES_JSON = r"""
     },
     {
      "description": "How many hydrants hang off this line", "enabled": true,
-     "expression": "var h = FeatureSetByName($datastore, \"{18C465CB-4C24-4716-957B-E8093E2102CD}\", [\"LINEID\"], false);\nreturn Count(h);",
+     "expression": "var h = FeatureSetByName($datastore, \"{00000000-0000-4000-8000-000000000001}\", [\"LINEID\"], false);\nreturn Count(h);",
      "field": "HYDCOUNT", "name": "CountHydrants",
      "on_delete": false, "on_insert": true, "on_update": true,
      "rule_type": "calculation"
@@ -953,7 +967,7 @@ RULES_JSON = r"""
     },
     {
      "description": "one short line, still not portable", "enabled": true,
-     "expression": "Text(Count(FeatureSetByName($datastore,\"{18C465CB-4C24-4716-957B-E8093E2102CD}\")))",
+     "expression": "Text(Count(FeatureSetByName($datastore,\"{00000000-0000-4000-8000-000000000001}\")))",
      "field": "OWNERNAME", "name": "OwnerName",
      "on_delete": false, "on_insert": true, "on_update": false,
      "rule_type": "calculation"
@@ -963,7 +977,7 @@ RULES_JSON = r"""
   {
    "item": "dataset",
    "name": "Hydrants",
-   "uuid": "{18C465CB-4C24-4716-957B-E8093E2102CD}",
+   "uuid": "{00000000-0000-4000-8000-000000000001}",
    "rules": [
     {
      "description": "geometry predicate", "enabled": true,
@@ -1445,10 +1459,31 @@ def self_test():
           in unreadable({"counts": {"rules": 2}, "datasets": [
               {"rules": [{}, {}, {}]}]}, []),
           "nor can one that counts fewer")
-    check(unreadable({"counts": {"rules": "6"}, "datasets": []}, []) == ""
-          and unreadable({"counts": {"rules": True}, "datasets": []}, []) == "",
-          "a count that is not a number is not compared, and a boolean is not "
-          "a number")
+    check("not a whole number" in unreadable(
+              {"counts": {"rules": "6"}, "datasets": []}, [])
+          and "not a whole number" in unreadable(
+              {"counts": {"rules": True}, "datasets": []}, [])
+          and "not a whole number" in unreadable(
+              {"counts": {"rules": 1.0}, "datasets": []}, []),
+          "a rule count that is not an integer cannot be checked, so the "
+          "report cannot be called clean, and a boolean is not an integer  "
+          "<-- pinned defect")
+    renamed = {"counts": {"rules": 1}, "datasets": [
+        {"name": "A", "rules": [{"name": "R", "scriptExpression": "x.y"}]}]}
+    check("1 attribute rule(s) with no text under the expression key"
+          in unreadable(renamed, []),
+          "a report whose count matches but whose rules keep the Arcade under "
+          "another key cannot be called clean  <-- pinned defect")
+    check(unreadable({"counts": {"rules": 2}, "datasets": [
+              {"rules": [{"expression": ""}, {"expression": "$feature.A"}]}]},
+                      []) == "",
+          "an empty expression is still text under the right key, so a "
+          "report with one is clean")
+    check(count_rules(renamed, with_expression=True) == 0
+          and count_rules(renamed, with_expression=False) == 1
+          and count_rules({"datasets": [{"rules": [{"expression": None}]}]},
+                          with_expression=False) == 1,
+          "rules with no text expression are counted apart from the rest")
     check(count_rules({"datasets": [None, {"rules": None},
                                     {"rules": [None, {"expression": ""}, {}]}
                                     ]}) == 2,
@@ -1652,7 +1687,7 @@ def self_test():
           "<-- pinned defect")
     check(rule_by["OwnerName"]["chars"] < rule_by["CommentOnly"]["chars"],
           "and shorter than it in characters too  <-- pinned defect")
-    check("{18C465CB-4C24-4716-957B-E8093E2102CD}"
+    check("{00000000-0000-4000-8000-000000000001}"
           in rule_by["OwnerName"]["expression"],
           "the layer name inside the rule is the guid the geodatabase stored, "
           "not the name it was written with")
@@ -1998,6 +2033,19 @@ def self_test():
         check("6 attribute rules but 0 were read" in out,
               "and a gdbxray report that counts rules it did not yield says "
               "so")
+        for name, body in (
+                ("rules_renamed.json",
+                 u'{"counts": {"rules": 1}, "datasets": [{"name": "WaterLines"'
+                 u', "rules": [{"name": "R", "scriptExpression": '
+                 u'"FeatureSetByName($map, \\"H\\")"}]}]}'),
+                ("rules_count_str.json",
+                 u'{"counts": {"rules": "x"}, "datasets": []}')):
+            with io.open(name, "w", encoding="utf-8") as handle:
+                handle.write(body)
+            code, out = capture(lambda: main([name]))
+            check(code == 2 and name in out and "expression(s) in" not in out,
+                  "%s is not called clean: exit 2 and the file is named  "
+                  "<-- pinned defect" % name)
         code, out = capture(lambda: main(["portable.json", "wrong_shape.json",
                                           "empty.json"]))
         check(code == 2 and "wrong_shape.json" in out and "empty.json" in out
@@ -2242,7 +2290,7 @@ def self_test():
         thread.daemon = True
         thread.start()
         # The stub is on the loopback address. A proxy in the environment, which
-        # a county network often has, would be sent the request instead.
+        # an office network often has, would be sent the request instead.
         globals()["PROXIES"] = {}
         try:
             check(item_url("https://x", "abc")

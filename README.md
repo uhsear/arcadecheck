@@ -2,7 +2,7 @@
 
 Inventory every Arcade expression you own and say which ones can leave with you.
 
-A county decides to move a layer off ArcGIS Online. The first question is how much Arcade is
+A team decides to move a layer off ArcGIS Online. The first question is how much Arcade is
 attached to it, and nobody can answer. The expressions are not in one place: some are in popups,
 some in labels, some in a renderer, some in the form that field crews use, some in a dashboard
 that reads the same service, and some are attribute rules inside the geodatabase the service was
@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-603 assertions, 0 failed
+608 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 607 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 612 lines long.
 
 ## Requirements
 
@@ -226,7 +226,7 @@ timeout and a reply that is not HTTP exit 2 with a message that has no token in 
 |---|---|
 | 0 | Every expression found is PORTABLE, in documents the tool recognised. A web map, dashboard, form or gdbxray report with no Arcade in it counts. |
 | 1 | At least one expression is PORTABLE WITH WORK or ESRI ONLY. |
-| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count does not match the rules read. The file is named on stderr. |
+| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count is not an integer, does not match the rules read, or whose rules hold no text under `expression`. The file is named on stderr. |
 | 64 | Usage error: no input, an `--item` with no `--portal`, a portal url with no scheme or with a user name or password in it, or `--token-stdin` with nothing on standard input. |
 
 Exit 1 is the normal answer for a real organization. It means there is work, not that the run
@@ -324,9 +324,6 @@ failed.
   `gdbxray` report, is written as its Python text and without the guard, so the cell is not the
   original value. A negative number becomes the text `-5` and an infinite one `-inf`, and both
   start with a minus sign and are not guarded.
-- A `gdbxray` report whose `counts.rules` is not an integer, such as the string `"x"`, skips the
-  rule count check. If its datasets hold nothing this tool reads, the run reports zero
-  expressions and exits 0.
 - A token that a portal echoes back in lowercase percent-escapes, or in any other re-encoding, is
   not masked in the error message. Only the raw token and the uppercase percent-encoded form are.
 - If standard output is closed early, for example by `head`, the run ends in a traceback with exit
@@ -357,8 +354,6 @@ failed.
 - Any string under an `expression`, `valueExpression` or `scriptExpression` key that is not one
   bare identifier is rated as an expression. A reference name that holds a slash, such as
   `expr/0`, would count as one if a product stores it under such a key. That was not checked.
-- A `gdbxray` report whose `counts.rules` equals the number of rules, and whose rules keep the
-  expression under another key than `expression`, reports zero expressions and exits 0.
 - The description of the ArcGIS Online Assistant and the Attribute Rules view in the opening rests
   on prior use of both tools, and no Esri page is cited for it.
 - The byte order mark is this tool's choice. No Microsoft page is cited for how Excel reads a CSV
@@ -372,26 +367,35 @@ failed.
   document is collected. It was not checked against Esri's dashboard specification, and the
   dashboard fixture in the self-test is a stand-in.
 - A document with the right shape and a different rule layout, such as a newer `gdbxray`, exits
-  2 only when it carries a `counts.rules` that disagrees with the rules read. A report with no
-  such count is read as far as its shape allows.
+  2 when it carries a `counts.rules` that is not an integer or disagrees with the rules read, or
+  when a rule has no text under `expression`. A report with no `counts.rules` at all is not
+  recognised as a report, and is read as far as its generic shape allows.
+- A portal that echoes the token back with HTML-escaped slashes, such as `&#x2F;`, is not masked
+  in the "portal refused item" message, in the same way as the lowercase percent-escapes above.
+- A token piped on standard input with a byte order mark in front, as a file saved by Notepad
+  has, is used with the mark, so the portal refuses it and the tool exits 2. Nothing leaks.
+- A portal url that already has a query or a fragment, such as `https://host/?a=b`, gets the item
+  path added after it, so the request goes to the same host with a wrong path and exits 2.
+- An uncaught exception anywhere ends in a traceback with exit code 1, the same code as "findings
+  exist". The surrogate and deep nesting cases above are two ways to reach it.
 
 ## Verification
 
-`--self-test` is 603 assertions with no network, no portal and no geodatabase. It runs green with
+`--self-test` is 608 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
 the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1261 statements and 314
+Branch coverage is 100%, with no line excluded and no `pragma`: 1275 statements and 320
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-230 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+235 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
-geometry-function, token and proxy fixes, and 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction. They are the same on every host. A tab or
+geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
+rating and the glued-flag redaction, and 5 cover the rule count and renamed key checks. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -407,7 +411,7 @@ Each claim and where it was exercised:
 | A hostile JSON key in `path` is guarded | a real run over a document with the key `=evil` |
 | Portal text is guarded | a real `--apply` run against a local `http.server` stub |
 | Nothing is written without `--apply`, and `--ap` is refused | unchanged, from the earlier assertions |
-| A file of no known shape, a saved portal error, or a rule count that does not match exits 2, never 0 | `main` over five real files, plus the pure `unreadable` and `count_rules` |
+| A file of no known shape, a saved portal error, a rule count that does not match or is not an integer, or a rule with no text under `expression` exits 2, never 0 | `main` over seven real files, plus the pure `unreadable` and `count_rules` |
 | A document that was read and held no Arcade is counted | a web map with an empty layer list, `1 document(s)` |
 | A non-UTF-8 file names itself | a real Latin-1 file |
 | A space, control character or trailing newline in the portal or the id never reaches `urllib`, so no token is printed | `item_url` and `main`, with the token as a search string in the output |
