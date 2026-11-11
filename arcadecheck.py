@@ -49,7 +49,7 @@ import sys
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import HTTPSHandler, ProxyHandler, build_opener
 
 # =============================================================================
 # CONFIGURATION. Deliberately not flags. Change here, not at the call site.
@@ -204,7 +204,12 @@ for _name in ("intersects", "contains", "within", "touches", "crosses",
               "geometry", "intersection", "multiparttosinglepart", "offset",
               "rotate", "symmetricdifference", "union", "area", "length",
               "length3d", "centroid", "point", "polygon", "polyline",
-              "multipoint", "distance"):
+              "multipoint", "distance", "angle", "bearing",
+              "convertdirection", "distancetocoordinate",
+              "envelopeintersects", "equals", "isselfintersecting",
+              "issimple", "measuretocoordinate", "nearestcoordinate",
+              "nearestvertex", "pointtocoordinate", "ringisclockwise",
+              "setgeometry", "simplify"):
     WITH_WORK_CALLS[_name] = ("a geometry operation; shapely and GEOS do the "
                               "same work under another name")
 
@@ -232,6 +237,13 @@ WITH_WORK_CALLS["attachments"] = (
 
 del _name
 
+# Not a call: the reason given to an expression whose string, comment or
+# template is never closed. It does not parse, so nothing about it is certain.
+UNCLOSED = "(unclosed)"
+UNCLOSED_WHY = ("a string, comment or template is never closed, so the "
+                "expression does not parse and its calls were read from raw "
+                "text")
+
 
 # ----------------------------------------------------------------- pure core
 
@@ -254,17 +266,26 @@ def strip_noise(text):
 
     An unterminated literal or block comment swallows the rest of the text. That
     is what the Arcade parser does with it too, and an expression that does not
-    parse is not something this tool should paper over by guessing.
+    parse is not something this tool should paper over by guessing. rate() is
+    the one that does not guess: _blank reports where the open literal or
+    comment began, and rate() then reads the whole text raw for calls and
+    refuses to call the expression clean.
     """
+    return _blank(text)[0]
+
+
+def _blank(text):
+    """strip_noise's work: (blanked text, start of an unclosed literal or None)."""
     if not text:
-        return ""
+        return "", None
     out = []
     index = 0
     size = len(text)
+    dangling = None
     # Each entry is [in_template, brace depth]. A template literal (backticks,
     # Arcade 1.11 and later) is text with code embedded in ${ }, and the code
     # can hold strings and further templates, so the scan keeps a stack.
-    stack = [[False, 0]]
+    stack = [[False, 0, 0]]
     while index < size:
         char = text[index]
         after = text[index + 1] if index + 1 < size else ""
@@ -276,7 +297,7 @@ def strip_noise(text):
                 continue
             if char == "$" and after == "{":
                 out.append("  ")
-                stack.append([False, 0])
+                stack.append([False, 0, index])
                 index += 2
                 continue
             if char == "`":
@@ -288,6 +309,7 @@ def strip_noise(text):
                 out.append(" ")
                 index += 1
         elif char == "/" and after == "*":
+            start = index
             out.append("  ")
             index += 2
             while index < size:
@@ -297,8 +319,11 @@ def strip_noise(text):
                     break
                 out.append("\n" if text[index] == "\n" else " ")
                 index += 1
+            else:
+                dangling = start
         elif char == '"' or char == "'":
             quote = char
+            start = index
             out.append(" ")
             index += 1
             while index < size:
@@ -313,8 +338,10 @@ def strip_noise(text):
                     break
                 out.append("\n" if text[index] == "\n" else " ")
                 index += 1
+            else:
+                dangling = start
         elif char == "`":
-            stack.append([True, 0])
+            stack.append([True, 0, index])
             out.append(" ")
             index += 1
         elif char == "}" and len(stack) > 1 and stack[-1][1] == 0:
@@ -328,7 +355,9 @@ def strip_noise(text):
                 stack[-1][1] -= 1
             out.append(char)
             index += 1
-    return "".join(out)
+    if len(stack) > 1:
+        dangling = stack[1][2]
+    return "".join(out), dangling
 
 
 def find_calls(text):
@@ -367,9 +396,18 @@ def rate(expression):
     Nothing in this function can see how long the text is.
     """
     text = expression if isinstance(expression, str) else ""
-    calls = find_calls(strip_noise(text))
+    blanked, open_at = _blank(text)
+    # A literal or comment that is never closed leaves the blanking unable to
+    # tell code from text: a stray quote swallows what follows it, and an
+    # earlier quote pairs with the wrong one. Read the whole text raw, so a
+    # call anywhere in it still counts.
+    calls = find_calls(blanked if open_at is None else text)
     reasons = []
     rating = PORTABLE
+    if open_at is not None:
+        reasons.append({"name": UNCLOSED, "rating": WITH_WORK,
+                        "why": UNCLOSED_WHY})
+        rating = WITH_WORK
     for name in calls:
         key = name.lower()
         if key in ESRI_ONLY_CALLS:
@@ -1115,6 +1153,40 @@ def self_test():
           "a comment inside the ${ } is blanked, and the backtick in it ends "
           "nothing")
 
+    # ---- an expression that does not parse cannot be called clean
+    hidden = 'var a = "hello\nreturn Count(FeatureSetByName($datastore, "Hydrants"));'
+    result = rate(hidden)
+    check(result["rating"] == ESRI_ONLY and "FeatureSetByName" in result["calls"],
+          "an unclosed quote does not hide a FeatureSetByName that an earlier "
+          "quote paired with the wrong one  <-- pinned defect")
+    check(any(r["name"] == UNCLOSED for r in result["reasons"]),
+          "and the unclosed literal is named as a reason  <-- pinned defect")
+    result = rate("/* a note that is never closed\nreturn 1 + 1;")
+    check(result["rating"] == WITH_WORK and result["calls"] == [],
+          "an unclosed block comment is not rated PORTABLE, although it hides "
+          "nothing  <-- pinned defect")
+    check(rate("var a = 'one\nreturn Count(x)")["rating"] == WITH_WORK,
+          "an unclosed single quote is not rated PORTABLE  <-- pinned defect")
+    check(rate("return `a ${ b")["rating"] == WITH_WORK,
+          "an unclosed template placeholder is not rated PORTABLE  "
+          "<-- pinned defect")
+    check(rate("return `a b")["rating"] == WITH_WORK,
+          "and neither is an unclosed template")
+    check(rate("return 'closed' + \"closed\" + /* c */ 1")["reasons"] == [],
+          "a closed string, comment and template give no unclosed reason")
+    check(rate("/*")["rating"] == WITH_WORK,
+          "a comment opener at the very end is unclosed")
+
+    # Esri's Arcade function reference lists these under Geometry functions.
+    for name in ("Angle", "Bearing", "ConvertDirection",
+                 "DistanceToCoordinate", "EnvelopeIntersects", "Equals",
+                 "IsSelfIntersecting", "IsSimple", "MeasureToCoordinate",
+                 "NearestCoordinate", "NearestVertex", "PointToCoordinate",
+                 "RingIsClockwise", "SetGeometry", "Simplify"):
+        check(rate("return %s($feature, 1)" % name)["rating"] == WITH_WORK,
+              "the geometry function %s is PORTABLE WITH WORK, not PORTABLE  "
+              "<-- pinned defect" % name)
+
     # ---- what an expression calls
     check(find_calls("Count(x)") == ["Count"],
           "a call is found by its name and bracket")
@@ -1768,6 +1840,34 @@ def self_test():
     check(_parse(["--portal", "https://x"]).portal == "https://x",
           "--portal is read")
     check(_parse(["--token", "T"]).token == "T", "--token is read")
+    check(_parse(["--token-stdin"]).token_stdin is True,
+          "--token-stdin is read")
+    check(_parse([]).token_stdin is False and _parse([]).token is None,
+          "and neither is on by default")
+    check(read_token(io.StringIO(u" T0K \nsecond line\n")) == "T0K",
+          "the token is the first line of stdin, trimmed")
+    check(read_token(io.StringIO(u"")) is None
+          and read_token(io.StringIO(u"\n")) is None,
+          "an empty stdin holds no token")
+
+    def refused(argv):
+        try:
+            _parse(argv)
+        except SystemExit as exc:
+            return exc.code
+
+    code, out = capture(lambda: refused(["--token", "AAA", "--token-stdin"]))
+    check(code == 2 and "not allowed with" in out,
+          "--token and --token-stdin together are refused")
+
+    code, out = capture(lambda: refused(["--tokn=SECRET123", "a.json"]))
+    check(code == 2 and "--tokn" in out and "SECRET123" not in out,
+          "a mistyped token flag is refused without quoting its value back  "
+          "<-- pinned defect")
+    code, out = capture(lambda: refused(["--apply=SECRET123"]))
+    check(code == 2 and "SECRET123" not in out,
+          "and so is a value given to a flag that takes none  "
+          "<-- pinned defect")
     check(_parse(["--item", "a", "--item", "b"]).item == ["a", "b"],
           "--item can be given more than once and keeps both")
     check(not hasattr(_parse([]), "password"),
@@ -1828,6 +1928,23 @@ def self_test():
         code, out = capture(lambda: main(["broken.json"]))
         check(code == 2 and "not JSON" in out,
               "a file that is not json is a read failure")
+        for name, body in (
+                ("unclosed.json", u'{"popupInfo": {"expressionInfos": [{"name": '
+                                  u'"n", "expression": "var a = \\"hello; return '
+                                  u'Count(FeatureSetByName($map, \\"y\\"));"}]}}'),
+                ("unclosed_comment.json",
+                 u'{"popupInfo": {"expressionInfos": [{"name": "n", '
+                 u'"expression": "/* never closed\\nreturn 1"}]}}')):
+            with io.open(name, "w", encoding="utf-8") as handle:
+                handle.write(body)
+        code, out = capture(lambda: main(["unclosed.json"]))
+        check(code == 1 and "ESRI ONLY" in out,
+              "a document whose expression hides a call behind a stray quote "
+              "exits 1, not 0  <-- pinned defect")
+        code, out = capture(lambda: main(["unclosed_comment.json"]))
+        check(code == 1 and "(unclosed)" in out,
+              "an expression with a comment that is never closed exits 1 and "
+              "names the reason, not a clean 0  <-- pinned defect")
         for name, body in (
                 ("wrong_shape.json", u'{"item": {"id": "ab12cd34"}}'),
                 ("err.json", u'{"error": {"code": 403, "message": "No"}}'),
@@ -2044,6 +2161,17 @@ def self_test():
                     self.send(200, json.dumps(
                         {"error": {"code": 498,
                                    "message": "Invalid token " + token}}))
+                elif item in ("bounce", "bouncetoken"):
+                    # A redirect to the echo item. Whether the token travels
+                    # with it depends only on the Location the portal sent.
+                    self.send_response(302)
+                    self.send_header("Location",
+                                     "/sharing/rest/content/items/echoquery/"
+                                     "data" + ("?" + parts.query
+                                               if item == "bouncetoken"
+                                               else ""))
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
                 elif item == "echoquery":
                     # Hands the raw query string back as the item document, so
                     # the self-test can read what went on the wire instead of
@@ -2090,6 +2218,9 @@ def self_test():
         thread = threading.Thread(target=server.serve_forever)
         thread.daemon = True
         thread.start()
+        # The stub is on the loopback address. A proxy in the environment, which
+        # a county network often has, would be sent the request instead.
+        globals()["PROXIES"] = {}
         try:
             check(item_url("https://x", "abc")
                   == "https://x/sharing/rest/content/items/abc/data",
@@ -2132,6 +2263,29 @@ def self_test():
             check(fetch_item(base, "echoquery")["query"] == "f=json",
                   "a read with no token puts no token on the wire at all, "
                   "not an empty one  <-- pinned defect")
+            saved_env = dict(os.environ)
+            os.environ["HTTP_PROXY"] = os.environ["http_proxy"] = (
+                "http://127.0.0.1:9")
+            os.environ["NO_PROXY"] = os.environ["no_proxy"] = ""
+            try:
+                check(fetch_item(base, "echoquery")["query"] == "f=json",
+                      "a proxy in the environment is not asked to carry the "
+                      "loopback stub, so the self-test needs no network  "
+                      "<-- pinned defect")
+                globals()["PROXIES"] = None
+                raises(lambda: fetch_item(base, "echoquery"),
+                       "and left to the default, the same environment does "
+                       "send a read to the proxy, so the check above is live")
+            finally:
+                globals()["PROXIES"] = {}
+                os.environ.clear()
+                os.environ.update(saved_env)
+            check(fetch_item(base, "bounce", secret)["query"] == "",
+                  "a redirect whose Location carries no query does not take "
+                  "the token with it")
+            check(secret in fetch_item(base, "bouncetoken", secret)["query"],
+                  "and one whose Location carries the query does, which is "
+                  "the portal's doing and not this tool's")
             awkward = "a/b+c d&e"
             echoed = fetch_item(base, "echoquery", awkward)["query"]
             check(echoed == "f=json&token=a%2Fb%2Bc%20d%26e",
@@ -2225,6 +2379,29 @@ def self_test():
                   "the token never reaches stdout  <-- pinned defect")
             check("goodmap" in out,
                   "the item id is used as the source name")
+            check("warning: --token is visible" in out,
+                  "a token on the command line draws a warning that does not "
+                  "repeat it")
+
+            def via_stdin(text):
+                real_stdin = sys.stdin
+                sys.stdin = io.StringIO(text)
+                try:
+                    return main(["--portal", base, "--item", "goodmap",
+                                 "--token-stdin"])
+                finally:
+                    sys.stdin = real_stdin
+
+            code, out = capture(lambda: via_stdin(secret + "\n"))
+            check(code == 1 and "10 expression(s)" in out,
+                  "--token-stdin reads the token from standard input and the "
+                  "portal accepts it")
+            check(secret not in out and "warning" not in out,
+                  "and prints neither the token nor a warning")
+            code, out = capture(lambda: via_stdin("\n"))
+            check(code == 64 and "read no token" in out,
+                  "an empty standard input is a usage error, not a read with "
+                  "no token")
 
             os.environ["ARCADECHECK_TOKEN"] = secret
             try:
@@ -2294,6 +2471,7 @@ def self_test():
                   "an item id with a trailing newline is a usage error, and "
                   "the token is not printed  <-- pinned defect")
         finally:
+            globals()["PROXIES"] = None
             server.shutdown()
             server.server_close()
             thread.join(timeout=5)
@@ -2461,6 +2639,11 @@ def _mask(text, token):
     return text
 
 
+# None reads the proxy settings of the environment, which is what a real run
+# wants. The self-test sets {} so its loopback stub is never sent to a proxy.
+PROXIES = None
+
+
 def fetch_item(portal, item_id, token=None, insecure=False):
     """One item's data document, read from a portal. Nothing is written.
 
@@ -2474,8 +2657,9 @@ def fetch_item(portal, item_id, token=None, insecure=False):
     if token:
         query += "&token=" + quote(token, safe="")
     try:
-        handle = urlopen(url + "?" + query, timeout=TIMEOUT,
-                         context=ssl_context(insecure))
+        opener = build_opener(ProxyHandler(PROXIES),
+                              HTTPSHandler(context=ssl_context(insecure)))
+        handle = opener.open(url + "?" + query, timeout=TIMEOUT)
     except HTTPError as exc:
         raise ValueError("portal answered %s for item %s" % (exc.code, item_id))
     except URLError as exc:
@@ -2517,8 +2701,34 @@ def write_csv(path, records):
             writer.writerow(csv_row(row))
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse, except that it never quotes a flag's value back at the user.
+
+    A mistyped token flag such as --tokn=SECRET is "unrecognized", and argparse
+    prints it whole. The value could be a credential, so it is hidden.
+    """
+
+    def parse_args(self, args=None, namespace=None):
+        namespace, extras = self.parse_known_args(args, namespace)
+        if extras:
+            self.error("unrecognized arguments: %s" % " ".join(
+                arg.split("=", 1)[0] + "=[redacted]"
+                if arg.startswith("-") and "=" in arg else arg
+                for arg in extras))
+        return namespace
+
+    def error(self, message):
+        super(_Parser, self).error(
+            re.sub(r"(explicit argument).*$", r"\1 [redacted]", message))
+
+
+def read_token(stream):
+    """The first line of a stream, trimmed, or None when it holds no token."""
+    return stream.readline().strip() or None
+
+
 def _parse(argv):
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="arcadecheck.py",
         description="Inventory every Arcade expression you own and say which "
                     "ones can leave with you.",
@@ -2534,9 +2744,16 @@ def _parse(argv):
                              "https:// or http://.")
     parser.add_argument("--item", metavar="ID", action="append", default=[],
                         help="item id to read from --portal. Repeatable.")
-    parser.add_argument("--token", metavar="TOKEN",
-                        help="portal token. Env: ARCADECHECK_TOKEN, which "
-                             "keeps it out of the process list.")
+    secret = parser.add_mutually_exclusive_group()
+    secret.add_argument("--token", metavar="TOKEN",
+                        help="portal token. Visible in the process list and "
+                             "in shell history, so prefer --token-stdin or "
+                             "the env var ARCADECHECK_TOKEN.")
+    secret.add_argument("--token-stdin", dest="token_stdin",
+                        action="store_true",
+                        help="read the portal token from the first line of "
+                             "standard input, which keeps it out of the "
+                             "process list and shell history.")
     parser.add_argument("--insecure", action="store_true",
                         help="skip TLS verification, for an Enterprise portal "
                              "behind an internal CA. OFF by default.")
@@ -2582,7 +2799,18 @@ def main(argv=None):
 
     # The environment is second, not first: a flag on the command line is the
     # more deliberate of the two.
-    token = args.token or os.environ.get("ARCADECHECK_TOKEN") or None
+    if args.token_stdin:
+        token = read_token(sys.stdin)
+        if not token:
+            emit("error: --token-stdin read no token. Pipe the token in on "
+                 "one line.", sys.stderr)
+            return 64
+    else:
+        token = args.token or os.environ.get("ARCADECHECK_TOKEN") or None
+        if args.token:
+            emit("warning: --token is visible in the process list and in "
+                 "shell history. Use --token-stdin or ARCADECHECK_TOKEN.",
+                 sys.stderr)
 
     documents = []
     for path in args.files:

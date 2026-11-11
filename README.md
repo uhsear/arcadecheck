@@ -30,86 +30,31 @@ $ python arcadecheck.py --self-test
 arcadecheck self-test: no portal, no geodatabase, no credentials
 --------------------------------------------------------------------
 PASS  a line comment is blanked out
+PASS  and the blanked text is the same length as what came in
+PASS  the newline that ends a line comment survives it
+PASS  a block comment is blanked out
+PASS  a block comment keeps the lines it spans, so line numbers still line up
+PASS  a double quoted literal is blanked out
+PASS  a single quoted literal is blanked out too
+PASS  an escaped quote does not end the literal early
+PASS  an unterminated literal swallows the rest, which is what Arcade does
+PASS  an unterminated block comment swallows the rest for the same reason
+PASS  an empty or null expression strips to the empty string
 PASS  a division is not the start of a comment  <-- pinned defect
-PASS  an apostrophe in a template literal does not open a string that hides the call after it  <-- pinned defect
-PASS  a member called after a dot is not a call to a function of that name  <-- pinned defect
-PASS  the if of an if statement is not a call  <-- pinned defect
 ...
-PASS  FeatureSetByName makes an expression esri only
-PASS  and FeatureSetByName is named as the reason
-PASS  FeatureSetByRelationshipClass makes an expression esri only
-PASS  and FeatureSetByRelationshipClass is named as the reason
-PASS  FeatureSetByName inside a comment does not count  <-- pinned defect
-PASS  FeatureSetByName inside a string literal does not count  <-- pinned defect
-PASS  $datastore inside a comment does not count  <-- pinned defect
-PASS  $datastore inside a string literal does not count  <-- pinned defect
-...
-PASS  a ONE LINE expression calling FeatureSetByName is esri only  <-- pinned defect
-PASS  a THIRTY LINE arithmetic expression is portable  <-- pinned defect
-PASS  and the portable one is more than twenty times longer than the unportable one  <-- pinned defect
-PASS  an empty expression rates portable with nothing in it
-PASS  a null expression rates portable instead of raising
-PASS  non-ascii text inside an expression is portable
-...
-PASS  a document carrying both shapes is read as the gdbxray report, because its rules are not a web map's layers  <-- pinned defect
-PASS  a document of no known shape that yields nothing cannot be called clean  <-- pinned defect
-PASS  a gdbxray report that counts more rules than were read cannot be called clean  <-- pinned defect
-PASS  a document that was read and held nothing still counts as one  <-- pinned defect
-PASS  a bare identifier is the NAME of an expression, not one  <-- pinned defect
-PASS  a label is a label, although its path runs through drawingInfo  <-- pinned defect
-PASS  the legacy [FIELD] label syntax is NOT collected as arcade  <-- pinned defect
-PASS  a form element that names an expression is not collected as one  <-- pinned defect
-PASS  a form expression has no layer, rather than repeating its own title  <-- pinned defect
-...
-PASS  all six attribute rules in the geodatabase are collected
-PASS  which is the rule count gdbxray reported for that geodatabase
-PASS  a rule calling FeatureSetByName over $datastore is esri only
-PASS  a rule naming two esri functions in a comment and a string is portable  <-- pinned defect
-PASS  a rule that is ONE line is still esri only  <-- pinned defect
-PASS  even though the portable rule beside it is three lines long  <-- pinned defect
-PASS  and shorter than it in characters too  <-- pinned defect
-PASS  the layer name inside the rule is the guid the geodatabase stored, not the name it was written with
-...
-PASS  --apply is off by default, so nothing is written  <-- pinned defect
-PASS  --insecure is off by default, so tls is verified  <-- pinned defect
-...
-PASS  text starting with an equals sign gets one apostrophe in front  <-- pinned defect
-PASS  text starting with a carriage return gets one apostrophe in front  <-- pinned defect
-PASS  the expression column is guarded when it starts with a tab  <-- pinned defect
-PASS  a number column stays a number even when it is negative  <-- pinned defect
-...
-PASS  a unique prefix of --apply, --ap, is refused rather than read as --apply, so a typo cannot write a file  <-- pinned defect
-...
-PASS  there is no --password at all, because argv is readable by every process on the box  <-- pinned defect
-PASS  a portal url with no scheme is refused before any request is made, because urllib would quote the token back  <-- pinned defect
-PASS  and that mark is read as a mark rather than as the first character of broken json  <-- pinned defect
-PASS  a file that is not UTF-8 names itself and says how to fix it  <-- pinned defect
-PASS  wrong_shape.json is not called clean: exit 2 and the file is named  <-- pinned defect
-PASS  err.json is not called clean: exit 2 and the file is named  <-- pinned defect
-PASS  and writes nothing  <-- pinned defect
-PASS  a source file named with an equals sign is guarded in the source column  <-- pinned defect
-PASS  no cell in the whole file starts with a character a spreadsheet runs as a formula  <-- pinned defect
-PASS  a portal url with a user name or password is refused before urllib can quote it back  <-- pinned defect
-PASS  and has no blank line between rows, which is what newline='' prevents on windows  <-- pinned defect
-PASS  the header names every column in the order a reader expects, written out here rather than read back from COLUMNS  <-- pinned defect
-PASS  a second run refuses to overwrite the csv  <-- pinned defect
-...
-PASS  a read with no token puts no token on the wire at all, not an empty one  <-- pinned defect
-PASS  and a token is percent encoded whole, so a slash or an ampersand inside one cannot split the query  <-- pinned defect
-PASS  a portal url with a space or a control character in it is refused before a token is added  <-- pinned defect
-PASS  and the token is masked in the form it travelled in, not only the raw form  <-- pinned defect
-PASS  the trunc item exits 2 with a message, not a traceback, and no token on screen  <-- pinned defect
-PASS  an item read from the portal comes back as its document
-PASS  and a token the portal echoed back is not in the message  <-- pinned defect
-PASS  the token never reaches stdout  <-- pinned defect
-PASS  a --token on the command line beats a stale one left in the environment  <-- pinned defect
-PASS  and no credential reaches the csv on disk  <-- pinned defect
-PASS  and its layer, name and expression are guarded on the way to disk  <-- pinned defect
+PASS  the self-test leaves no temporary directory behind  <-- pinned defect
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
+PASS  and the escape says which character it was
 PASS  the harness records a false check, a missing exception and a wrong exception as three failures, so a broken tool turns this self-test red  <-- pinned defect
+PASS  and a failure is printed as FAIL, so the transcript shows which assertion went red
+PASS  a failed assertion is listed by its label under a count that includes it, so a red run says what went red
+PASS  and the exit status is 1 only when something failed
+PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-543 assertions, 0 failed
+583 assertions, 0 failed
 ```
+
+The first 14 lines and the last 10 lines of one real run, which is 587 lines long.
 
 ## Requirements
 
@@ -171,7 +116,7 @@ PORTABLE WITH WORK rules.json / rule / SnapCheck
       1  Intersects                   a geometry operation; shapely and GEOS do the same work under another name
 ```
 
-That run is a real one, against a File Geodatabase built for the self-test. `OwnerName` is one
+That run is a real one, against a synthetic File Geodatabase built for the self-test. `OwnerName` is one
 line long and it is still ESRI ONLY.
 
 ## Usage
@@ -189,7 +134,8 @@ python arcadecheck.py --portal https://county.maps.arcgis.com --item 1a2b3c --it
 | `FILE` | none | Web map, dashboard, form or `gdbxray --json` documents. Any number of them. |
 | `--portal` | none | Portal to read items from. Must start with `https://` or `http://`. |
 | `--item` | none | Item id to read from `--portal`. Repeatable. |
-| `--token` | none | Portal token. Prefer the env var `ARCADECHECK_TOKEN`: a token on the command line is visible in the process list and in shell history. |
+| `--token` | none | Portal token. A token on the command line is visible in the process list and in shell history, so this flag prints a warning. Prefer `--token-stdin` or the env var `ARCADECHECK_TOKEN`. |
+| `--token-stdin` | off | Read the token from the first line of standard input. It cannot be combined with `--token`. |
 | `--insecure` | off | Skip TLS verification, for an Enterprise portal behind an internal CA. |
 | `--all` | off | List the portable expressions too, not only the ones that need work. |
 | `--out` | none | CSV file to write the inventory to. |
@@ -218,7 +164,7 @@ It collects Arcade from five places:
 - **Renderers.** `valueExpression` on a renderer and on each of its visual variables.
 - **Forms.** `formInfo.expressionInfos[]`, the calculation and constraint expressions. A form
   element that points at one of those by **name** is not a second expression, and is skipped.
-- **Dashboards.** The Arcade data expressions under a widget's data source.
+- **Dashboards.** Every `expression` key in a document that has a `widgets` list.
 - **Attribute rules.** From `gdbxray --json` output, not from the geodatabase. `gdbxray` already
   reads `GDB_Items`, and there is no reason for a second tool to open a `.gdb`.
 
@@ -242,7 +188,7 @@ prefix is one of the mitigations the page names; for Excel it prefers a tab, and
 none of them is reliable after the file is saved and reopened. Treat the guard as a first line and
 not as a guarantee. A cell that starts with a space or a line feed is not guarded.
 
-Three things it refuses to be fooled by:
+Four things it refuses to be fooled by:
 
 - **Length is not portability.** Nothing in the rater can see how long an expression is. A one
   line `FeatureSetByName($datastore, "Hydrants")` is ESRI ONLY. A thirty line block of arithmetic
@@ -255,10 +201,17 @@ Three things it refuses to be fooled by:
   string, and a call written after it is still found.
 - **A name after a dot is not a call.** `$feature.Buffer(3)` reads a field called `Buffer`. The
   geometry function of that name is `Buffer($feature, ...)`, at the start of the expression.
+- **An expression that does not parse is never clean.** A string, block comment or template that
+  is never closed leaves the blanking unable to tell code from text. Such an expression is rated
+  at least PORTABLE WITH WORK, with the reason `(unclosed)`, and its calls are read from the raw
+  text, so a `FeatureSetByName` that a stray quote would have hidden still makes it ESRI ONLY.
+  The cost is that a name in a comment of a broken expression also counts.
 
 The credential rules are the same ones the rest of this portfolio uses. There is no `--password`
-flag, because `argv` is readable by every process on the machine. The token can come from
-`ARCADECHECK_TOKEN` instead of the command line. A portal url with no scheme, a space or a control
+flag, because `argv` is readable by every process on the machine. The token can come from the
+first line of standard input with `--token-stdin`, or from `ARCADECHECK_TOKEN`, instead of the
+command line. `--token` still works and prints a warning. A mistyped flag that carries a value in
+one word, such as `--tokn=SECRET`, is refused with the value replaced by `[redacted]`. A portal url with no scheme, a space or a control
 character in it, a user name or password in it (`https://user:pw@host`), and an item id with a
 trailing newline, are refused before a request is built,
 because `urllib` and `http.client` quote the whole url into their own exceptions and that url
@@ -273,7 +226,7 @@ timeout and a reply that is not HTTP exit 2 with a message that has no token in 
 | 0 | Every expression found is PORTABLE, in documents the tool recognised. A web map, dashboard, form or gdbxray report with no Arcade in it counts. |
 | 1 | At least one expression is PORTABLE WITH WORK or ESRI ONLY. |
 | 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count does not match the rules read. The file is named on stderr. |
-| 64 | Usage error: no input, an `--item` with no `--portal`, or a portal url with no scheme or with a user name or password in it. |
+| 64 | Usage error: no input, an `--item` with no `--portal`, a portal url with no scheme or with a user name or password in it, or `--token-stdin` with nothing on standard input. |
 
 Exit 1 is the normal answer for a real organization. It means there is work, not that the run
 failed.
@@ -312,9 +265,10 @@ failed.
   ESRI ONLY rating is not confirmed. `$view` is named on the popup, labeling and visualization
   pages, and `$camera` and `$sensor` on none. None of the three is in the ESRI ONLY list, so an
   expression that reads one of them rates PORTABLE.
-- The rater finds calls by pattern and does not parse Arcade. A string literal or block comment
-  that is never closed hides every call after it, so `var a = "hello` followed by a
-  `FeatureSetByName` call rates PORTABLE and exits 0. A space between a dot and a name, as in
+- The rater finds calls by pattern and does not parse Arcade. It cannot tell whether an
+  expression is valid, so a string or comment that is never closed makes the rating a conservative
+  one, not a certain one: see the fourth item under "Four things it refuses to be fooled by". A
+  space between a dot and a name, as in
   `$feature . Buffer(3)`, is read as a geometry call and rates PORTABLE WITH WORK. Arcade's page
   on template literals does not say how a backtick is escaped, so an escaped backtick in one is read the way
   JavaScript reads it.
@@ -324,9 +278,12 @@ failed.
   into one. This tool does not scan for secrets. Treat the file as sensitive and read it before
   you share it. The report on screen does not print expression text.
 - A token passed with `--token` is visible in the process list and in shell history. Use
-  `ARCADECHECK_TOKEN`. There is no option to read the token from stdin.
-- Use an `https://` portal. With `http://` the token travels unencrypted in the query string, and
-  `urllib` follows redirects, including one from `https` to `http`.
+  `--token-stdin` or `ARCADECHECK_TOKEN`. The token is sent in the query string of the request
+  (`f=json&token=...`), so it also lands in the access logs of the portal, its web adaptor and any
+  proxy on the way. Esri's REST pages describe a token in a request header as well; this tool
+  does not use that.
+- Use an `https://` portal. With `http://` the token travels unencrypted in the query string.
+- `--insecure` turns certificate checks off without a warning, and the token is still sent.
 - The `--out` check and the write are two steps, so a file created between them is overwritten, and
   a dangling symlink at `--out` is followed. A write that fails halfway leaves a partial CSV that
   the next run refuses to overwrite. `--apply` with no `--out` writes nothing and says nothing.
@@ -337,17 +294,42 @@ failed.
   raise `UnicodeEncodeError`. The run ends in a traceback with exit code 1 and leaves a CSV that
   holds only the header row, which the next run refuses to overwrite.
 - A JSON `name` or `layer` that is not a string, such as a number, a list or an object in a
-  `gdbxray` report, is written as its Python text and without the guard. It cannot start a
-  formula, but the cell is not the original value. A negative number becomes the text `-5`.
+  `gdbxray` report, is written as its Python text and without the guard, so the cell is not the
+  original value. A negative number becomes the text `-5` and an infinite one `-inf`, and both
+  start with a minus sign and are not guarded.
 - A `gdbxray` report whose `counts.rules` is not an integer, such as the string `"x"`, skips the
   rule count check. If its datasets hold nothing this tool reads, the run reports zero
   expressions and exits 0.
-- A flag typo that carries its value in one word, such as `--tokn=SECRET`, is quoted back in
-  `argparse`'s "unrecognized arguments" error on stderr, so a typed token can reach the terminal
-  that way. `argparse` usage errors, such as an unknown flag, `--ap` or a flag with no value,
-  exit 2 and not 64, although 2 also means that a read or write step failed.
-- `urllib` follows redirects, and the token stays in the query string of the `Location` the
-  portal sends. A redirect to another host, or from `https` to `http`, forwards the token.
+- A flag typo that carries its value in one word, such as `--tokn=SECRET`, is refused with the
+  value hidden. A single dash option with a glued value, such as `-xSECRET`, is not hidden, and
+  no such option exists. `argparse` usage errors, such as an unknown flag, `--ap` or a flag with
+  no value, exit 2 and not 64, although 2 also means that a read or write step failed.
+- `urllib` follows any redirect the portal sends, including one to another host or from `https`
+  to `http`, and with `--insecure` the redirected request is unverified too. The tool adds no
+  token to a redirected request. The token reaches the new address only when the portal's
+  `Location` header carries it, which was tested with two local stubs.
+- Text from a document or a portal, such as a layer title or a portal error message, is printed
+  to the terminal as it came. An escape sequence or a carriage return in it can redraw the lines
+  around it.
+- The CSV is created with the default permissions of the account, not owner only.
+- `--out` without `--apply` prints `Would write` even when the file already exists. The run with
+  `--apply` then refuses with exit 2.
+- A JSON `expression` that is not a string, such as a number or a list, is skipped without a
+  word, so a document can report zero expressions and exit 0.
+- Any string under an `expression`, `valueExpression` or `scriptExpression` key that is not one
+  bare identifier is rated as an expression. A reference name that holds a slash, such as
+  `expr/0`, would count as one if a product stores it under such a key. That was not checked.
+- A `gdbxray` report whose `counts.rules` equals the number of rules, and whose rules keep the
+  expression under another key than `expression`, reports zero expressions and exits 0.
+- The description of the ArcGIS Online Assistant and the Attribute Rules view in the opening rests
+  on prior use of both tools, and no Esri page is cited for it.
+- The byte order mark is this tool's choice. No Microsoft page is cited for how Excel reads a CSV
+  that has none.
+- The `PORTABLE WITH WORK` equivalents, shapely and GEOS for geometry and pyproj or geographiclib
+  for geodesic measurement, are suggestions. The self-test does not exercise them and this README
+  cites no page for them.
+- The `gdbxray` fixture is recorded output from a synthetic File Geodatabase. The geodatabase is
+  not shipped, so the fixture cannot be rebuilt from the files in this repository.
 - The dashboard shape is matched by key name only: `expression` anywhere under a dashboard
   document is collected. It was not checked against Esri's dashboard specification, and the
   dashboard fixture in the self-test is a stand-in.
@@ -357,16 +339,19 @@ failed.
 
 ## Verification
 
-`--self-test` is 543 assertions with no network, no portal and no geodatabase. It runs green with
-the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.11.15`, `3.12.10`,
-`3.13.2` and `3.13.7`, the last one from ArcGIS Pro's `arcgispro-py3` environment, and on Ubuntu
-under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts are identical line for line.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1155 statements and 294
+`--self-test` is 583 assertions with no network, no portal and no geodatabase. It runs green with
+the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
+`3.13.7`, the last two of which are in a cloned ArcGIS Pro conda environment, and on Ubuntu under
+`python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts are identical line for line.
+It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
+proxy settings turned off.
+Branch coverage is 100%, with no line excluded and no `pragma`: 1257 statements and 312
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-170 assertions added since the 373 before the CSV guard, 98 cover the guard and 72 cover the
-false-clean, template literal and portal-failure fixes. They are the same on every host. A tab or
+210 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+false-clean, template literal and portal-failure fixes, and 40 cover the unclosed-literal,
+geometry-function, token and proxy fixes. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -392,6 +377,12 @@ Each claim and where it was exercised:
 | A token echoed back percent encoded is masked | the same stub, with a token that needs encoding |
 | `FeatureSetByRelationshipClass` and `KnowledgeGraphByPortalItem` are ESRI ONLY | `rate`, beside the other esri only calls |
 | The summary names what failed | `_verdict`, which a green run cannot otherwise reach |
+| An expression with an unclosed string, comment or template is never rated PORTABLE, and a call a stray quote would hide still counts | `rate` over five unclosed shapes, and `main` over two real files, which exit 1 |
+| All 15 geometry functions that were rated PORTABLE are PORTABLE WITH WORK | `rate`, one assertion per function |
+| A token can be given on standard input, and `--token` warns | `read_token`, and `main` against the loopback stub, which accepts only the right token |
+| A mistyped token flag is not echoed back | `_parse` with `--tokn=SECRET123`, checked on the captured stderr |
+| A redirect carries the token only when the portal's `Location` does | two redirect items on the loopback stub |
+| A proxy in the environment does not break the self-test | `fetch_item` against the stub with `HTTP_PROXY` set to a dead address, and the same call with the default proxy handling, which fails as expected |
 
 Sources, all re-fetched on 2026-11-11:
 
@@ -402,7 +393,12 @@ Sources, all re-fetched on 2026-11-11:
 - [Python `csv` module](https://docs.python.org/3/library/csv.html): "If csvfile is a file object,
   it should be opened with newline=''". The page does not mention `utf-8-sig`. The byte order
   mark is this tool's choice for Excel, and the self-test pins it.
-- [Arcade function reference](https://developers.arcgis.com/arcade/function-reference/):
+- [Arcade function reference](https://developers.arcgis.com/arcade/function-reference/): the
+  [Geometry functions](https://developers.arcgis.com/arcade/function-reference/geometry_functions/)
+  page, re-fetched on 2026-11-11, lists `Angle`, `Bearing`, `ConvertDirection`,
+  `DistanceToCoordinate`, `EnvelopeIntersects`, `Equals`, `IsSelfIntersecting`, `IsSimple`,
+  `MeasureToCoordinate`, `NearestCoordinate`, `NearestVertex`, `PointToCoordinate`,
+  `RingIsClockwise`, `SetGeometry` and `Simplify`, which this tool rates PORTABLE WITH WORK.
   `FeatureSetByName`, `FeatureSetByRelationshipName` and `FeatureSetByRelationshipClass` are
   FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function.
 - [Arcade template literals](https://developers.arcgis.com/arcade/guide/template-literals/):
@@ -423,9 +419,9 @@ Sources, all re-fetched on 2026-11-11:
   every profile page listed in the [profiles index](https://developers.arcgis.com/arcade/profiles/)
   found no `$aggregatedFeatures`, `$camera` or `$sensor`.
 
-The attribute rule fixtures are real. A File Geodatabase was built with `arcpy`, six attribute
-rules were added to two feature classes, `gdbxray --json` read it back, and that output is what
-the self-test asserts against.
+The attribute rule fixtures are recorded output. A synthetic File Geodatabase was built with
+`arcpy`, six attribute rules were added to two feature classes, `gdbxray --json` read it back, and
+that output is what the self-test asserts against.
 
 ## Contributing
 
