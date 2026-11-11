@@ -17,6 +17,14 @@ in the third week, when the layer is already half moved.
 rates each one PORTABLE, PORTABLE WITH WORK or ESRI ONLY with the reason. It writes a CSV. It
 does not convert anything.
 
+The tools people use today are the ArcGIS Online Assistant and ArcGIS Pro's Attribute Rules view.
+For one item they are the right tool. The Assistant shows an item's raw JSON, edits it in place
+and needs nothing installed. The Attribute Rules view lists every rule on a feature class with its
+expression. Both answer "what is in this thing". Neither spans popups, labels, renderers,
+dashboards, forms and attribute rules at once, and neither reads an expression and tells you it
+calls `FeatureSetByName`. That is the gap this tool fills. It does not replace them: use them to
+edit, and use this to size the job.
+
 ```
 $ python arcadecheck.py --self-test
 arcadecheck self-test: no portal, no geodatabase, no credentials
@@ -28,6 +36,8 @@ PASS  the if of an if statement is not a call  <-- pinned defect
 ...
 PASS  FeatureSetByName makes an expression esri only
 PASS  and FeatureSetByName is named as the reason
+PASS  FeatureSetByRelationshipClass makes an expression esri only
+PASS  and FeatureSetByRelationshipClass is named as the reason
 PASS  FeatureSetByName inside a comment does not count  <-- pinned defect
 PASS  FeatureSetByName inside a string literal does not count  <-- pinned defect
 PASS  $datastore inside a comment does not count  <-- pinned defect
@@ -41,6 +51,9 @@ PASS  a null expression rates portable instead of raising
 PASS  non-ascii text inside an expression is portable
 ...
 PASS  a document carrying both shapes is read as the gdbxray report, because its rules are not a web map's layers  <-- pinned defect
+PASS  a document of no known shape that yields nothing cannot be called clean  <-- pinned defect
+PASS  a gdbxray report that counts more rules than were read cannot be called clean  <-- pinned defect
+PASS  a document that was read and held nothing still counts as one  <-- pinned defect
 PASS  a bare identifier is the NAME of an expression, not one  <-- pinned defect
 PASS  a label is a label, although its path runs through drawingInfo  <-- pinned defect
 PASS  the legacy [FIELD] label syntax is NOT collected as arcade  <-- pinned defect
@@ -69,6 +82,9 @@ PASS  a unique prefix of --apply, --ap, is refused rather than read as --apply, 
 PASS  there is no --password at all, because argv is readable by every process on the box  <-- pinned defect
 PASS  a portal url with no scheme is refused before any request is made, because urllib would quote the token back  <-- pinned defect
 PASS  and that mark is read as a mark rather than as the first character of broken json  <-- pinned defect
+PASS  a file that is not UTF-8 names itself and says how to fix it  <-- pinned defect
+PASS  wrong_shape.json is not called clean: exit 2 and the file is named  <-- pinned defect
+PASS  err.json is not called clean: exit 2 and the file is named  <-- pinned defect
 PASS  and writes nothing  <-- pinned defect
 PASS  a source file named with an equals sign is guarded in the source column  <-- pinned defect
 PASS  no cell in the whole file starts with a character a spreadsheet runs as a formula  <-- pinned defect
@@ -78,6 +94,9 @@ PASS  a second run refuses to overwrite the csv  <-- pinned defect
 ...
 PASS  a read with no token puts no token on the wire at all, not an empty one  <-- pinned defect
 PASS  and a token is percent encoded whole, so a slash or an ampersand inside one cannot split the query  <-- pinned defect
+PASS  a portal url with a space or a control character in it is refused before a token is added  <-- pinned defect
+PASS  and the token is masked in the form it travelled in, not only the raw form  <-- pinned defect
+PASS  the trunc item exits 2 with a message, not a traceback, and no token on screen  <-- pinned defect
 PASS  an item read from the portal comes back as its document
 PASS  and a token the portal echoed back is not in the message  <-- pinned defect
 PASS  the token never reaches stdout  <-- pinned defect
@@ -87,7 +106,7 @@ PASS  and its layer, name and expression are guarded on the way to disk  <-- pin
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
 PASS  the harness records a false check, a missing exception and a wrong exception as three failures, so a broken tool turns this self-test red  <-- pinned defect
 --------------------------------------------------------------------
-471 assertions, 0 failed
+527 assertions, 0 failed
 ```
 
 ## Requirements
@@ -168,7 +187,7 @@ python arcadecheck.py --portal https://county.maps.arcgis.com --item 1a2b3c --it
 | `FILE` | none | Web map, dashboard, form or `gdbxray --json` documents. Any number of them. |
 | `--portal` | none | Portal to read items from. Must start with `https://` or `http://`. |
 | `--item` | none | Item id to read from `--portal`. Repeatable. |
-| `--token` | none | Portal token. Env: `ARCADECHECK_TOKEN`, which keeps it out of the process list. |
+| `--token` | none | Portal token. Prefer the env var `ARCADECHECK_TOKEN`: a token on the command line is visible in the process list and in shell history. |
 | `--insecure` | off | Skip TLS verification, for an Enterprise portal behind an internal CA. |
 | `--all` | off | List the portable expressions too, not only the ones that need work. |
 | `--out` | none | CSV file to write the inventory to. |
@@ -205,7 +224,7 @@ Each expression is rated on **what it calls**:
 
 | Rating | Means | Examples of what earns it |
 |---|---|---|
-| `ESRI ONLY` | There is no equivalent outside ArcGIS. | `FeatureSetByName`, `FeatureSetByPortalItem`, `FeatureSetByRelationshipName`, `Portal()`, `GetUser`, `$map`, `$datastore`, `$layer`, `$editcontext`, `$originalfeature`, `$aggregatedfeatures` |
+| `ESRI ONLY` | There is no equivalent outside ArcGIS. | `FeatureSetByName`, `FeatureSetByPortalItem`, `FeatureSetByRelationshipName`, `FeatureSetByRelationshipClass`, `KnowledgeGraphByPortalItem`, `Portal()`, `GetUser`, `$map`, `$datastore`, `$layer`, `$editcontext`, `$originalfeature`, `$aggregatedfeatures` |
 | `PORTABLE WITH WORK` | Something else does this, under another name. | geometry predicates and operations (shapely and GEOS), geodesic measurement (pyproj or geographiclib), domain and subtype lookups (rebuild as a table), attachments |
 | `PORTABLE` | It moves as it is. | arithmetic and text over the row's own fields, `IIf`, `When`, `Count`, `Filter`, date formatting |
 
@@ -215,10 +234,11 @@ each one. Adding to it is the intended way to extend the tool.
 One guard is on the output side. The CSV is the only thing this tool writes, and it is written
 only with `--apply`. Every text column goes through `guard_cell` first, whatever put the text
 there: the document, the portal, the file name you passed, or a key in the JSON path. The
-character list is OWASP's. Its page recommends the single quote prefix used here, and it also
-warns that the prefix is not reliable in Excel after the file is saved and reopened, so treat the
-guard as a first line and not as a guarantee. A cell that starts with a space is not guarded,
-because a space is not on that list.
+six characters are the ones this tool guards. OWASP's page lists those six and also a line feed
+and the full-width forms of `=`, `+`, `-` and `@`, which are not guarded here. The single quote
+prefix is one of the mitigations the page names; for Excel it prefers a tab, and it warns that
+none of them is reliable after the file is saved and reopened. Treat the guard as a first line and
+not as a guarantee. A cell that starts with a space or a line feed is not guarded.
 
 Three things it refuses to be fooled by:
 
@@ -233,18 +253,20 @@ Three things it refuses to be fooled by:
 
 The credential rules are the same ones the rest of this portfolio uses. There is no `--password`
 flag, because `argv` is readable by every process on the machine. The token can come from
-`ARCADECHECK_TOKEN` instead of the command line. A portal url with no scheme is refused before a
-request is built, because `urllib` quotes the whole url back into its own exception and that url
+`ARCADECHECK_TOKEN` instead of the command line. A portal url with no scheme, a space or a control
+character in it, and an item id with a trailing newline, are refused before a request is built,
+because `urllib` and `http.client` quote the whole url into their own exceptions and that url
 carries the token. A token that a portal echoes back inside an error message is masked before the
-message is printed.
+message is printed, both as typed and as sent (percent encoded). A truncated answer, a read
+timeout and a reply that is not HTTP exit 2 with a message that has no token in it.
 
 ## Exit codes
 
 | Code | Means |
 |---|---|
-| 0 | Every expression found is PORTABLE, or nothing was found. |
+| 0 | Every expression found is PORTABLE, in documents the tool recognised. A web map, dashboard, form or gdbxray report with no Arcade in it counts. |
 | 1 | At least one expression is PORTABLE WITH WORK or ESRI ONLY. |
-| 2 | A document could not be read, a portal call failed, or the CSV could not be written. |
+| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count does not match the rules read. The file is named on stderr. |
 | 64 | Usage error: no input, an `--item` with no `--portal`, or a portal url with no scheme. |
 
 Exit 1 is the normal answer for a real organization. It means there is work, not that the run
@@ -280,20 +302,45 @@ failed.
 - The guard stops a spreadsheet from running a cell on open. OWASP says the prefix can be lost
   when Excel saves the file and it is opened again.
 - Only the Arcade facts that the official documentation confirmed are cited under Verification.
-  The function reference lists `FeatureSetByName` under its FeatureSet functions. The profile
-  guide named `$feature` and `$map` and did not name `$datastore`, `$layer`, `$editcontext`,
-  `$originalfeature` or `$aggregatedfeatures`, so those five ratings rest on earlier work and
-  were not re-verified in this release.
+  The function reference lists `FeatureSetByName` and `FeatureSetByRelationshipClass` under its
+  FeatureSet functions and `KnowledgeGraphByPortalItem` under its knowledge graph functions. The
+  profile guide named `$feature` and `$map` and did not name `$datastore`, `$layer`,
+  `$editcontext`, `$originalfeature` or `$aggregatedfeatures`, so those five ratings rest on
+  earlier work and were not re-verified in this release. The profile guide and the Python pages
+  below were not re-fetched in this release.
+- The guard covers `=`, `+`, `-`, `@`, tab and carriage return. A cell that starts with a line
+  feed or a full-width `=`, `+`, `-` or `@` is written as it came, although OWASP lists those too.
+- The CSV holds the full text of every expression, including any key, token or password written
+  into one. This tool does not scan for secrets. Treat the file as sensitive and read it before
+  you share it. The report on screen does not print expression text.
+- A token passed with `--token` is visible in the process list and in shell history. Use
+  `ARCADECHECK_TOKEN`. There is no option to read the token from stdin.
+- Use an `https://` portal. With `http://` the token travels unencrypted in the query string, and
+  `urllib` follows redirects, including one from `https` to `http`.
+- The `--out` check and the write are two steps, so a file created between them is overwritten, and
+  a dangling symlink at `--out` is followed. A write that fails halfway leaves a partial CSV that
+  the next run refuses to overwrite. `--apply` with no `--out` writes nothing and says nothing.
+- A JSON document nested deeper than the Python recursion limit ends in a traceback with exit
+  code 1, which is also the code for "findings exist". The whole portal answer is read into
+  memory with no size limit.
+- The dashboard shape is matched by key name only: `expression` anywhere under a dashboard
+  document is collected. It was not checked against Esri's dashboard specification, and the
+  dashboard fixture in the self-test is a stand-in.
+- A document with the right shape and a different rule layout, such as a newer `gdbxray`, exits
+  2 only when it carries a `counts.rules` that disagrees with the rules read. A report with no
+  such count is read as far as its shape allows.
 
 ## Verification
 
-`--self-test` is 471 assertions with no network, no portal and no geodatabase. It runs green on
-Windows under `python 3.13`, on ArcGIS Pro's `python 3.13.7`, on Windows under `python 3.9.25` and on Ubuntu under `python 3.12`,
-with the same count. The Windows 3.13 and Ubuntu 3.12 transcripts are identical line for line.
-Branch coverage is 100%. The one line outside it is the `__main__` guard, which carries
+`--self-test` is 527 assertions with no network, no portal and no geodatabase. It runs green with
+the same count on Windows under `python 3.13.2`, on Windows under `python 3.12.10` and
+`python 3.11.8`, on ArcGIS Pro's `python 3.13.7`, and on Ubuntu under `python 3.12.3`. The Windows
+3.13 and Ubuntu 3.12 transcripts are identical line for line. No Python 3.9 interpreter was
+available, so the 3.9 claim rests on parsing the file with `ast.parse(feature_version=(3, 9))`,
+on the absence of f-strings, and on the stated minimum, not on a run. Branch coverage is 100%. The one line outside it is the `__main__` guard, which carries
 `# pragma: no cover`, because the coverage runner starts the file and the guard never fires
-when it does. The 98 assertions added for the CSV guard and the summary are the same on every
-host. A tab or a carriage return cannot be in a Windows file name, so those two are exercised
+when it does. Of the 154 assertions added since the 373 before the CSV guard, 98 cover the guard
+and 56 cover the false-clean and portal-failure fixes. They are the same on every host. A tab or a carriage return cannot be in a Windows file name, so those two are exercised
 through the document text and through `csv_row`, and the file name case uses `=evil.json`.
 
 Each claim and where it was exercised:
@@ -308,18 +355,27 @@ Each claim and where it was exercised:
 | A hostile JSON key in `path` is guarded | a real run over a document with the key `=evil` |
 | Portal text is guarded | a real `--apply` run against a local `http.server` stub |
 | Nothing is written without `--apply`, and `--ap` is refused | unchanged, from the earlier assertions |
+| A file of no known shape, a saved portal error, or a rule count that does not match exits 2, never 0 | `main` over five real files, plus the pure `unreadable` and `count_rules` |
+| A document that was read and held no Arcade is counted | a web map with an empty layer list, `1 document(s)` |
+| A non-UTF-8 file names itself | a real Latin-1 file |
+| A space, control character or trailing newline in the portal or the id never reaches `urllib`, so no token is printed | `item_url` and `main`, with the token as a search string in the output |
+| A truncated answer, a read timeout, a non-HTTP reply and a numeric error message exit 2 with no token | a local `http.server` stub, one item for each |
+| A token echoed back percent encoded is masked | the same stub, with a token that needs encoding |
+| `FeatureSetByRelationshipClass` and `KnowledgeGraphByPortalItem` are ESRI ONLY | `rate`, beside the other esri only calls |
 | The summary names what failed | `_verdict`, which a green run cannot otherwise reach |
 
-Sources checked on 2026-11-11:
+Sources. OWASP and the function reference were re-checked on 2026-11-11. The Python csv page and the profiles guide were not re-fetched in this release:
 
-- [OWASP, CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection): the six
-  characters, the single quote prefix, and the warning that it is unreliable after Excel saves
-  and reopens the file.
+- [OWASP, CSV Injection](https://community.owasp.org/attacks/CSV_Injection): the characters that
+  start a formula, which include the six guarded here plus a line feed and the full-width
+  forms; the single quote prefix as one mitigation and a tab for Excel as the preferred one; and
+  the warning that none is reliable after Excel saves and reopens the file.
 - [Python `csv` module](https://docs.python.org/3/library/csv.html): open the file with
   `newline=''`. The page does not mention `utf-8-sig`. The byte order mark is this tool's choice
   for Excel, and the self-test pins it.
 - [Arcade function reference](https://developers.arcgis.com/arcade/function-reference/):
-  `FeatureSetByName` is a FeatureSet function.
+  `FeatureSetByName`, `FeatureSetByRelationshipName` and `FeatureSetByRelationshipClass` are
+  FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function.
 - [Arcade profiles guide](https://developers.arcgis.com/arcade/guide/profiles/): `$feature` and
   `$map` are profile variables, and which ones exist depends on the context.
 

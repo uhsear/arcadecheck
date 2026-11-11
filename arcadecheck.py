@@ -46,6 +46,7 @@ import os
 import re
 import ssl
 import sys
+from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -115,10 +116,12 @@ TIMEOUT = 30
 # mark; every CSV reader that matters strips it again.
 CSV_ENCODING = "utf-8-sig"
 
-# A spreadsheet runs a cell that starts with one of these as a formula (OWASP,
-# "CSV Injection"). Every text cell in this CSV comes from a document or a
-# portal, so the first character is somebody else's choice. An Arcade
-# expression that starts with a minus sign is ordinary, not hostile.
+# A spreadsheet runs a cell that starts with one of these as a formula. These
+# are six of the characters OWASP's "CSV Injection" page lists; the page also
+# lists a line feed and the full-width forms of = + - @, which this tool does
+# not guard (see Limits in the README). Every text cell in this CSV comes from
+# a document or a portal, so the first character is somebody else's choice. An
+# Arcade expression that starts with a minus sign is ordinary, not hostile.
 FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
 
 # The columns written as numbers. A number is not text, so it is never guarded.
@@ -159,6 +162,10 @@ ESRI_ONLY_CALLS = {
         "fetches a layer from a portal item id",
     "featuresetbyrelationshipname":
         "walks a geodatabase relationship class",
+    "featuresetbyrelationshipclass":
+        "walks a geodatabase relationship class by its class name",
+    "knowledgegraphbyportalitem":
+        "opens a knowledge graph from a portal item id",
     "featuresetbyassociation":
         "walks a utility network association",
     "featuresetbyid":
@@ -538,10 +545,54 @@ def collect_rules(doc, source=""):
     return records
 
 
-def summarise(records):
-    """Counts by rating, by location and by blocking call."""
+def count_rules(doc):
+    """How many rule objects a gdbxray report carries, whatever they hold."""
+    total = 0
+    for dataset in doc.get("datasets"):
+        if isinstance(dataset, dict) and isinstance(dataset.get("rules"), list):
+            total += sum(1 for rule in dataset["rules"]
+                         if isinstance(rule, dict))
+    return total
+
+
+def unreadable(doc, records):
+    """Why a document cannot be called clean, or "" when it can.
+
+    Zero expressions is a finding only when the tool understood the document.
+    A file of an unknown shape, a saved portal error and a gdbxray report whose
+    rules sit somewhere this reader does not look all yield zero, and reporting
+    them as PORTABLE would be a false clean. The caller turns the reason into
+    exit 2, "could not tell".
+    """
+    kind = detect(doc)
+    if kind == "rules":
+        stated = doc["counts"]["rules"]
+        seen = count_rules(doc)
+        if (isinstance(stated, int) and not isinstance(stated, bool)
+                and stated != seen):
+            return ("says it holds %d attribute rules but %d were read from "
+                    "its datasets, so its shape is not the one this tool "
+                    "reads" % (stated, seen))
+        return ""
+    if kind != "json" or records:
+        return ""
+    if isinstance(doc, dict) and isinstance(doc.get("error"), dict):
+        return ("is a saved portal error response (code %s), not an item "
+                "document; fetch the item again with a valid token"
+                % doc["error"].get("code"))
+    return ("is not a web map, dashboard, form or gdbxray report and holds no "
+            "Arcade expression, so this tool cannot say it is clean")
+
+
+def summarise(records, documents=None):
+    """Counts by rating, by location and by blocking call.
+
+    documents is how many documents were read. A document with no Arcade in it
+    is still a document, so the count cannot be recovered from the records.
+    """
     summary = {
         "total": len(records),
+        "documents": documents,
         "by_rating": dict((name, 0) for name in RANK),
         "by_where": {},
         "by_reason": {},
@@ -568,6 +619,8 @@ def summarise(records):
                 key, {"name": reason["name"], "rating": reason["rating"],
                       "why": reason["why"], "count": 0})
             entry["count"] += 1
+    if documents is None:
+        summary["documents"] = len(summary["sources"])
     return summary
 
 
@@ -602,7 +655,7 @@ def csv_row(row):
 def render(records, summary, show_all=False):
     """The report as lines of text. What cannot move first, then the counts."""
     lines = ["arcadecheck: %d expression(s) in %d document(s)"
-             % (summary["total"], len(summary["sources"])),
+             % (summary["total"], summary["documents"]),
              "-" * 68]
     listed = [row for row in records if show_all or row["rating"] != PORTABLE]
     for row in sorted(listed, key=lambda r: (-RANK[r["rating"]], r["source"],
@@ -838,7 +891,7 @@ RULES_JSON = r"""
     {
      "description": "names appear only in a comment and a string",
      "enabled": true,
-     "expression": "// FeatureSetByName was removed here, see ticket 8812\nvar note = \"call FeatureSetByPortalItem instead\";\nreturn Upper($feature.LINEID) + note;",
+     "expression": "// FeatureSetByName was removed here, see the note\nvar note = \"call FeatureSetByPortalItem instead\";\nreturn Upper($feature.LINEID) + note;",
      "field": "LINEID", "name": "CommentOnly",
      "on_delete": false, "on_insert": true, "on_update": false,
      "rule_type": "calculation"
@@ -932,6 +985,7 @@ def self_test():
     import shutil
     import tempfile
     import threading
+    import time
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from urllib.parse import parse_qs, urlsplit
 
@@ -1051,6 +1105,10 @@ def self_test():
          "FeatureSetByPortalItem"),
         ("FeatureSetByRelationshipName($feature, 'Inspections')",
          "FeatureSetByRelationshipName"),
+        ("FeatureSetByRelationshipClass($feature, 'Owners')",
+         "FeatureSetByRelationshipClass"),
+        ("KnowledgeGraphByPortalItem('ab12cd34')",
+         "KnowledgeGraphByPortalItem"),
         ("FeatureSetById($map, '0')", "FeatureSetById"),
         ("Portal('https://county.maps.arcgis.com')", "Portal"),
         ("GetUser($map).username", "GetUser"),
@@ -1199,6 +1257,48 @@ def self_test():
     check(detect({}) == "json" and detect([]) == "json",
           "anything else is just json")
     check(detect(None) == "json", "and so is nothing at all")
+    check(unreadable({"item": {"id": "ab12cd34"}}, [])
+          .startswith("is not a web map, dashboard, form or gdbxray report"),
+          "a document of no known shape that yields nothing cannot be called "
+          "clean  <-- pinned defect")
+    check(unreadable([], []) != "" and unreadable({}, []) != ""
+          and unreadable(None, []) != "",
+          "and neither can a list, an empty object or a null  "
+          "<-- pinned defect")
+    check("code 403" in unreadable({"error": {"code": 403,
+                                              "message": "Not authorized"}},
+                                   []),
+          "a saved portal error response is named as one, with its code  "
+          "<-- pinned defect")
+    check(unreadable({"error": "x"}, []).startswith("is not a web map"),
+          "an error that is not an object is just an unknown shape")
+    check(unreadable({"item": 1}, [{"expression": "x"}]) == "",
+          "a document of no known shape that yields an expression is read")
+    check(unreadable({"operationalLayers": []}, []) == ""
+          and unreadable({"widgets": []}, []) == ""
+          and unreadable({"formInfo": {}}, []) == "",
+          "a web map, a dashboard or a form with no Arcade in it is clean, "
+          "because the tool understood it")
+    check(unreadable(json.loads(RULES_JSON), []) == "",
+          "a gdbxray report whose rule count matches what was read is clean")
+    check("6 attribute rules but 4 were read"
+          in unreadable({"counts": {"rules": 6}, "datasets": [
+              {"rules": [{}, {}, {}, {}]}]}, []),
+          "a gdbxray report that counts more rules than were read cannot be "
+          "called clean  <-- pinned defect")
+    check("2 attribute rules but 3 were read"
+          in unreadable({"counts": {"rules": 2}, "datasets": [
+              {"rules": [{}, {}, {}]}]}, []),
+          "nor can one that counts fewer")
+    check(unreadable({"counts": {"rules": "6"}, "datasets": []}, []) == ""
+          and unreadable({"counts": {"rules": True}, "datasets": []}, []) == "",
+          "a count that is not a number is not compared, and a boolean is not "
+          "a number")
+    check(count_rules({"datasets": [None, {"rules": None},
+                                    {"rules": [None, {"expression": ""}, {}]}
+                                    ]}) == 2,
+          "rules are counted by object, whatever they hold, and a broken "
+          "dataset adds none")
     check(is_expression("$feature.A") is True, "arcade source is an expression")
     check(is_expression("expr0") is False,
           "a bare identifier is the NAME of an expression, not one  "
@@ -1449,6 +1549,10 @@ def self_test():
     check(empty_summary["by_rating"] == {PORTABLE: 0, WITH_WORK: 0,
                                          ESRI_ONLY: 0},
           "and all three counts are reported as zero rather than missing")
+    check(summarise([], 3)["documents"] == 3
+          and summarise(rows)["documents"] == 1,
+          "the document count is the number given, or else the sources that "
+          "yielded rows")
     both = summarise(rows + rules)
     check(both["total"] == 16 and len(both["sources"]) == 2,
           "two documents add up into one summary")
@@ -1482,6 +1586,10 @@ def self_test():
           "a document with no arcade still gets a report")
     check("what blocks a move" not in quiet,
           "and that report has nothing blocking a move")
+    check("0 expression(s) in 2 document(s)"
+          in "\n".join(render([], summarise([], 2))),
+          "a document that was read and held nothing still counts as one  "
+          "<-- pinned defect")
 
     # ---- the csv
     line = csv_row(by_name["Neighbours"])
@@ -1654,6 +1762,46 @@ def self_test():
         code, out = capture(lambda: main(["broken.json"]))
         check(code == 2 and "not JSON" in out,
               "a file that is not json is a read failure")
+        for name, body in (
+                ("wrong_shape.json", u'{"item": {"id": "ab12cd34"}}'),
+                ("err.json", u'{"error": {"code": 403, "message": "No"}}'),
+                ("list.json", u"[]"), ("empty.json", u"{}"),
+                ("empty_map.json", u'{"operationalLayers": []}'),
+                ("shape.json", u'{"counts": {"rules": 6}, "datasets": '
+                               u'[{"rule_list": []}]}')):
+            with io.open(name, "w", encoding="utf-8") as handle:
+                handle.write(body)
+        with io.open("latin.json", "wb") as handle:
+            handle.write(b'{"name": "caf\xe9"}')
+        code, out = capture(lambda: main(["latin.json"]))
+        check(code == 2 and "latin.json" in out and "UTF-8" in out
+              and "codec" not in out,
+              "a file that is not UTF-8 names itself and says how to fix it  "
+              "<-- pinned defect")
+        for name in ("wrong_shape.json", "err.json", "list.json",
+                     "empty.json", "shape.json"):
+            code, out = capture(lambda: main([name]))
+            check(code == 2 and name in out
+                  and "expression(s) in" not in out,
+                  "%s is not called clean: exit 2 and the file is named  "
+                  "<-- pinned defect" % name)
+        code, out = capture(lambda: main(["err.json"]))
+        check("portal error response (code 403)" in out,
+              "a saved portal error says what it is")
+        code, out = capture(lambda: main(["shape.json"]))
+        check("6 attribute rules but 0 were read" in out,
+              "and a gdbxray report that counts rules it did not yield says "
+              "so")
+        code, out = capture(lambda: main(["portable.json", "wrong_shape.json",
+                                          "empty.json"]))
+        check(code == 2 and "wrong_shape.json" in out and "empty.json" in out
+              and "portable.json" not in out,
+              "one good file beside two unreadable ones still exits 2 and "
+              "names only the two  <-- pinned defect")
+        code, out = capture(lambda: main(["empty_map.json"]))
+        check(code == 0 and "0 expression(s) in 1 document(s)" in out,
+              "a web map with no Arcade is clean, and the one document it "
+              "read is counted  <-- pinned defect")
         with io.open("bom.json", "rb") as handle:
             check(handle.read(3) == b"\xef\xbb\xbf",
                   "an item document saved out of a browser starts with a byte "
@@ -1841,6 +1989,29 @@ def self_test():
                             "expressionInfos": [{
                                 "name": "@SUM(1)",
                                 "expression": "-$feature.A"}]}}]}))
+                elif item == "echoencoded":
+                    # An Enterprise proxy that quotes the whole request back,
+                    # which carries the token in the form it went out in.
+                    self.send(200, json.dumps(
+                        {"error": {"code": 498, "message":
+                                   "Invalid token at " + self.path}}))
+                elif item == "msgint":
+                    self.send(200, json.dumps(
+                        {"error": {"code": 498, "message": 498}}))
+                elif item == "trunc":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "500")
+                    self.end_headers()
+                    self.wfile.write(b"{\"a\"")
+                elif item == "slow":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "500")
+                    self.end_headers()
+                    self.wfile.write(b"{\"a\"")
+                    self.wfile.flush()
+                    time.sleep(1.5)
+                elif item == "badstatus":
+                    self.wfile.write(b"garbage\r\n\r\n")
                 elif item == "notjson":
                     self.send(200, "<html>not json</html>", "text/html")
                 elif item == "arraydoc":
@@ -1867,6 +2038,16 @@ def self_test():
                    "an item id that is a path is refused")
             raises(lambda: item_url("https://x", ""),
                    "and so is an empty one")
+            raises(lambda: item_url("https://x", "abc\n"),
+                   "an item id with a trailing newline is refused, because $ "
+                   "matches before it  <-- pinned defect")
+            for bad_portal in ("https://x/portal ", "https://x/a b",
+                               "https://x/\tp", "https://x/\np",
+                               "https://x/\x7fp"):
+                raises(lambda: item_url(bad_portal, "abc"),
+                       "a portal url with a space or a control character in "
+                       "it is refused before a token is added  "
+                       "<-- pinned defect")
             check(ssl_context(False) is None,
                   "tls verification is left alone by default")
             check(ssl_context(True).verify_mode == ssl.CERT_NONE,
@@ -1916,6 +2097,49 @@ def self_test():
             message = raises(lambda: fetch_item(base, "missing", secret),
                              "an item that is not there is a failure")
             check("404" in message, "and the status code is reported")
+            encoded_token = "ab/cd+ef=gh"
+            message = raises(lambda: fetch_item(base, "echoencoded",
+                                                encoded_token),
+                             "a portal that quotes the request back is a "
+                             "failure")
+            check("ab%2Fcd" not in message and encoded_token not in message,
+                  "and the token is masked in the form it travelled in, not "
+                  "only the raw form  <-- pinned defect")
+            check("[redacted]" in message, "and the mask is visible")
+            message = raises(lambda: fetch_item(base, "msgint", secret),
+                             "a portal error whose message is a number is a "
+                             "failure")
+            check("498" in message,
+                  "and the number is reported rather than raising a "
+                  "TypeError  <-- pinned defect")
+            message = raises(lambda: fetch_item(base, "trunc", secret),
+                             "an answer shorter than its Content-Length is a "
+                             "failure")
+            check("cut off or timed out" in message and secret not in message,
+                  "and is reported as one, with no token  <-- pinned defect")
+            real_timeout = TIMEOUT
+            globals()["TIMEOUT"] = 0.3
+            try:
+                message = raises(lambda: fetch_item(base, "slow", secret),
+                                 "an answer that stops arriving is a failure")
+            finally:
+                globals()["TIMEOUT"] = real_timeout
+            check("cut off or timed out" in message,
+                  "and a read timeout is reported the same way  "
+                  "<-- pinned defect")
+            message = raises(lambda: fetch_item(base, "badstatus", secret),
+                             "a portal that answers with no HTTP status line "
+                             "is a failure")
+            check("broke the exchange" in message and secret not in message,
+                  "and is reported without a traceback or a token  "
+                  "<-- pinned defect")
+            message = raises(lambda: fetch_item(base + "/p\u00e4th", "abc",
+                                                secret),
+                             "a portal url urllib cannot send is a failure")
+            check("not a valid web address" in message
+                  and secret not in message and "p\u00e4th" not in message,
+                  "and the message carries neither the token nor the url  "
+                  "<-- pinned defect")
 
             code, out = capture(lambda: main(["--portal", base, "--item",
                                               "goodmap", "--token", secret]))
@@ -1976,6 +2200,25 @@ def self_test():
                                               "--item", "missing"]))
             check(code == 2 and "404" in out,
                   "an item the portal will not give up exits 2")
+            for stubbed in ("trunc", "msgint", "echoencoded", "badstatus"):
+                code, out = capture(lambda: main(
+                    ["--portal", base, "--item", stubbed, "--token", secret]))
+                check(code == 2 and "Traceback" not in out
+                      and secret not in out,
+                      "the %s item exits 2 with a message, not a traceback, "
+                      "and no token on screen  <-- pinned defect" % stubbed)
+            code, out = capture(lambda: main(
+                ["--portal", base + "/x ", "--item", "abc", "--token",
+                 secret]))
+            check(code == 64 and secret not in out
+                  and "control characters" in out,
+                  "a portal url with a trailing space is a usage error, and "
+                  "the token is not printed  <-- pinned defect")
+            code, out = capture(lambda: main(
+                ["--portal", base, "--item", "abc\n", "--token", secret]))
+            check(code == 64 and secret not in out,
+                  "an item id with a trailing newline is a usage error, and "
+                  "the token is not printed  <-- pinned defect")
         finally:
             server.shutdown()
             server.server_close()
@@ -2072,6 +2315,9 @@ def read_document(path):
             text = handle.read()
     except (OSError, IOError) as exc:
         raise ValueError("could not read %s: %s" % (path, exc))
+    except UnicodeDecodeError:
+        raise ValueError("could not read %s: it is not UTF-8 text. Save it as "
+                         "UTF-8 and run again." % path)
     try:
         return json.loads(text)
     except ValueError as exc:
@@ -2097,15 +2343,33 @@ def item_url(portal, item_id):
     """The data url of one item, or a refusal.
 
     Both halves are checked before a token is ever appended. urllib puts the
-    whole url into the exception it raises for a scheme it does not know, so a
-    typo in the portal name would otherwise print the token in a traceback.
+    whole url into the exception it raises for a scheme it does not know, and
+    http.client puts the whole request path into the one it raises for a space
+    or a control character, so a typo in the portal name or a stray newline in
+    an item id would otherwise print the token in a traceback. The id is
+    matched with fullmatch because "$" also matches before a final newline.
     """
     if not isinstance(portal, str) or not portal.lower().startswith(
             ("https://", "http://")):
         raise ValueError("portal url must start with https:// or http://")
-    if not isinstance(item_id, str) or not re.match(r"^[A-Za-z0-9]+$", item_id):
+    if re.search(r"[\s\x00-\x1f\x7f]", portal):
+        raise ValueError("portal url must not contain spaces or control "
+                         "characters")
+    if not isinstance(item_id, str) or not re.fullmatch(r"[A-Za-z0-9]+",
+                                                         item_id):
         raise ValueError("item id must be letters and digits")
     return portal.rstrip("/") + ITEM_DATA_PATH % item_id
+
+
+def _mask(text, token):
+    """text with the token hidden, in the raw form and the form sent on the wire.
+
+    The token goes out percent encoded, so a portal that echoes the request
+    back returns the encoded form, which a plain replace would miss.
+    """
+    for form in (token, quote(token, safe="")) if token else ():
+        text = text.replace(form, "[redacted]")
+    return text
 
 
 def fetch_item(portal, item_id, token=None, insecure=False):
@@ -2127,9 +2391,19 @@ def fetch_item(portal, item_id, token=None, insecure=False):
         raise ValueError("portal answered %s for item %s" % (exc.code, item_id))
     except URLError as exc:
         raise ValueError("could not reach the portal for item %s: %s"
-                         % (item_id, exc.reason))
+                         % (item_id, _mask(str(exc.reason), token)))
+    except ValueError:
+        raise ValueError("could not build a request for item %s: the portal "
+                         "url is not a valid web address" % item_id) from None
+    except (HTTPException, OSError) as exc:
+        raise ValueError("the portal broke the exchange for item %s: %s"
+                         % (item_id, _mask(str(exc), token))) from None
     try:
         raw = handle.read()
+    except (HTTPException, OSError) as exc:
+        raise ValueError("the portal's answer for item %s was cut off or "
+                         "timed out: %s" % (item_id, _mask(str(exc), token))
+                         ) from None
     finally:
         handle.close()
     try:
@@ -2140,9 +2414,7 @@ def fetch_item(portal, item_id, token=None, insecure=False):
         raise ValueError("item %s answered with a JSON %s, which is not an "
                          "item document" % (item_id, type(doc).__name__))
     if isinstance(doc.get("error"), dict):
-        detail = doc["error"].get("message") or "no message"
-        if token and token in detail:
-            detail = detail.replace(token, "[redacted]")
+        detail = _mask(str(doc["error"].get("message") or "no message"), token)
         raise ValueError("portal refused item %s: %s" % (item_id, detail))
     return doc
 
@@ -2239,9 +2511,18 @@ def main(argv=None):
             return 2
 
     records = []
+    problems = []
     for doc, source in documents:
-        records.extend(collect(doc, source))
-    summary = summarise(records)
+        found = collect(doc, source)
+        problem = unreadable(doc, found)
+        if problem:
+            problems.append("%s %s" % (source, problem))
+        records.extend(found)
+    if problems:
+        for problem in problems:
+            emit("error: %s" % problem, sys.stderr)
+        return 2
+    summary = summarise(records, len(documents))
     emit("\n".join(render(records, summary, args.show_all)))
 
     if args.out:
