@@ -115,6 +115,15 @@ TIMEOUT = 30
 # mark; every CSV reader that matters strips it again.
 CSV_ENCODING = "utf-8-sig"
 
+# A spreadsheet runs a cell that starts with one of these as a formula (OWASP,
+# "CSV Injection"). Every text cell in this CSV comes from a document or a
+# portal, so the first character is somebody else's choice. An Arcade
+# expression that starts with a minus sign is ordinary, not hostile.
+FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
+
+# The columns written as numbers. A number is not text, so it is never guarded.
+NUMBER_COLUMNS = ("chars", "lines")
+
 # =============================================================================
 # End of CONFIGURATION.
 # =============================================================================
@@ -568,12 +577,26 @@ def reason_text(row):
                       for reason in row["reasons"])
 
 
+def guard_cell(value):
+    """A text cell with one apostrophe in front when a spreadsheet would run it.
+
+    Only the first character matters. A number, or text that starts with
+    anything else, comes back as it came in. Dropping exactly one leading
+    apostrophe gives the original text back.
+    """
+    if isinstance(value, str) and value.startswith(FORMULA_STARTS):
+        return "'" + value
+    return value
+
+
 def csv_row(row):
-    """One record flattened to strings, in COLUMNS order."""
+    """One record flattened to cells, in COLUMNS order, text cells guarded."""
     flat = dict(row)
     flat["reasons"] = reason_text(row)
     flat["calls"] = ", ".join(row["calls"])
-    return [flat.get(name, "") for name in COLUMNS]
+    return [flat.get(name, "") if name in NUMBER_COLUMNS
+            else guard_cell(flat.get(name, ""))
+            for name in COLUMNS]
 
 
 def render(records, summary, show_all=False):
@@ -887,6 +910,14 @@ class _AsciiOnlyStream(object):
     def write(self, text):
         text.encode("ascii")
         self.text += text
+
+
+def _verdict(passed_count, failed):
+    """The closing lines of the self-test and its exit status."""
+    total = passed_count + len(failed)
+    lines = ["%d assertions, %d failed" % (total, len(failed))]
+    lines.extend("  FAILED: %s" % label for label in failed)
+    return lines, (1 if failed else 0)
 
 
 def self_test():
@@ -1475,6 +1506,61 @@ def self_test():
     check(all(isinstance(cell, (str, int)) for cell in line),
           "every cell is something csv can write without a converter")
 
+    # ---- the csv does not hand a spreadsheet a formula
+    starts = (("=", "an equals sign"), ("+", "a plus sign"),
+              ("-", "a minus sign"), ("@", "an at sign"),
+              ("\t", "a tab"), ("\r", "a carriage return"))
+    for start, label in starts:
+        check(guard_cell(start + "cmd") == "'" + start + "cmd",
+              "text starting with %s gets one apostrophe in front  "
+              "<-- pinned defect" % label)
+    check(guard_cell("'" + "=cmd") == "'=cmd",
+          "text that already starts with an apostrophe is left alone, so "
+          "the apostrophe is added once and never stacked")
+    check(guard_cell("a=b+c-d@e") == "a=b+c-d@e",
+          "a sign anywhere but first is left alone")
+    check(guard_cell("") == "" and guard_cell(" =cmd") == " =cmd",
+          "an empty cell and a cell that starts with a space are left alone")
+    check(guard_cell(0) == 0 and guard_cell(-3) == -3,
+          "a number is returned as a number, minus sign and all")
+    check(guard_cell(None) is None,
+          "and something that is not text is not touched")
+    check(guard_cell("=cmd")[1:] == "=cmd",
+          "dropping exactly one leading apostrophe gives the text back")
+    text_columns = [name for name in COLUMNS if name not in NUMBER_COLUMNS]
+    check(len(text_columns) == 10 and NUMBER_COLUMNS == ("chars", "lines"),
+          "ten columns are text and the two size columns are numbers")
+    for column in text_columns:
+        for start, label in starts:
+            hostile = {"source": "s", "document": "d", "where": "w",
+                       "layer": "l", "name": "n", "rating": "r",
+                       "reasons": [], "calls": [], "chars": 5, "lines": 1,
+                       "path": "p", "expression": "e"}
+            if column == "reasons":
+                hostile["reasons"] = [{"name": start + "x", "why": "y"}]
+            elif column == "calls":
+                hostile["calls"] = [start + "x"]
+            else:
+                hostile[column] = start + "x"
+            cell_text = csv_row(hostile)[COLUMNS.index(column)]
+            expected = "'" + start + "x" + (" y" if column == "reasons"
+                                            else "")
+            check(cell_text == expected,
+                  "the %s column is guarded when it starts with %s  "
+                  "<-- pinned defect" % (column, label))
+    clean = csv_row({"source": "s", "document": "d", "where": "w",
+                     "layer": "l", "name": "n", "rating": "r", "reasons": [],
+                     "calls": [], "chars": 0, "lines": 1, "path": "p",
+                     "expression": "e"})
+    check(clean == ["s", "d", "w", "l", "n", "r", "", "", 0, 1, "p", "e"],
+          "a row with nothing to guard is written exactly as it was")
+    check(csv_row({"source": "s", "document": "d", "where": "w", "layer": "l",
+                   "name": "n", "rating": "r", "reasons": [], "calls": [],
+                   "chars": -4, "lines": 1, "path": "p",
+                   "expression": "e"})[COLUMNS.index("chars")] == -4,
+          "a number column stays a number even when it is negative  "
+          "<-- pinned defect")
+
     # ---- the command line, before anything runs
     args = _parse([])
     check(args.apply is False,
@@ -1494,7 +1580,6 @@ def self_test():
             _parse(["--ap"])
         except SystemExit as exc:
             return exc.code
-        return None
 
     prefix_code, prefix_out = capture(parse_prefix)
     check(prefix_code == 2 and "--ap" in prefix_out,
@@ -1519,7 +1604,6 @@ def self_test():
             _parse(["--nonsense"])
         except SystemExit as exc:
             return exc.code
-        return None
 
     code, out = capture(parse_nonsense)
     check(code == 2, "an unknown flag is refused")
@@ -1646,6 +1730,69 @@ def self_test():
               "a csv that cannot be written is a write failure, not a "
               "traceback")
 
+        # ---- a document that tries to plant formulas in the csv
+        tab, cr = chr(9), chr(13)
+
+        def hostile_layer(layer, name, expression):
+            return {"title": layer, "popupInfo": {"expressionInfos": [
+                {"name": name, "expression": expression}]}}
+
+        hostile_doc = {"operationalLayers": [
+            hostile_layer("+layer", "@name", "-$feature.A + 1"),
+            hostile_layer("=layer", tab + "name", cr + "$feature.A"),
+            hostile_layer("-layer", cr + "name", "=$feature.A + 1"),
+            hostile_layer(tab + "layer", "name", "@$feature.A + 1")]}
+        with io.open("=evil.json", "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(hostile_doc))
+        with io.open("key.json", "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"=evil": {"expression": "$feature.A"}}))
+        code, out = capture(lambda: main(["=evil.json", "--out", "h.csv",
+                                          "--apply"]))
+        check(code == 0 and "Wrote h.csv" in out,
+              "a document of hostile text is rated and written like any other")
+        with io.open("h.csv", "r", encoding=CSV_ENCODING, newline="") as handle:
+            hostile_rows = list(csv.reader(handle))
+        check(len(hostile_rows) == 5,
+              "and every one of its four expressions has a row")
+        for position, (layer, name, expression) in enumerate((
+                ("+layer", "@name", "-$feature.A + 1"),
+                ("=layer", tab + "name", cr + "$feature.A"),
+                ("-layer", cr + "name", "=$feature.A + 1"),
+                (tab + "layer", "name", "@$feature.A + 1")), 1):
+            written = hostile_rows[position]
+            check(written[COLUMNS.index("layer")] == "'" + layer,
+                  "the layer cell of row %d is guarded  <-- pinned defect"
+                  % position)
+            check(written[COLUMNS.index("name")]
+                  == ("'" + name if name[0] in tab + cr + "@" else name),
+                  "the name cell of row %d is guarded when it needs it  "
+                  "<-- pinned defect" % position)
+            check(written[COLUMNS.index("expression")]
+                  == ("'" + expression if expression[0] in "=+-@" + cr
+                      else expression),
+                  "the expression cell of row %d is guarded when it needs "
+                  "it  <-- pinned defect" % position)
+        check(hostile_rows[1][COLUMNS.index("source")] == "'=evil.json",
+              "a source file named with an equals sign is guarded in the "
+              "source column  <-- pinned defect")
+        check(hostile_rows[1][COLUMNS.index("chars")] == "15"
+              and hostile_rows[1][COLUMNS.index("lines")] == "1",
+              "and the two size columns are plain numbers on disk")
+        check(not any(cell[:1] in ("=", "+", "-", "@", tab, cr)
+                      for row in hostile_rows for cell in row),
+              "no cell in the whole file starts with a character a "
+              "spreadsheet runs as a formula  <-- pinned defect")
+        check(hostile_rows[3][COLUMNS.index("expression")][1:]
+              == "=$feature.A + 1",
+              "dropping the one apostrophe gives the expression back exactly")
+        code, out = capture(lambda: main(["key.json", "--out", "k.csv",
+                                          "--apply"]))
+        with io.open("k.csv", "r", encoding=CSV_ENCODING, newline="") as handle:
+            key_rows = list(csv.reader(handle))
+        check(key_rows[1][COLUMNS.index("path")] == "'=evil.expression",
+              "a path that starts with a key from the document is guarded  "
+              "<-- pinned defect")
+
         # ---- a portal, over a real socket on the loopback address
         secret = "AAPK-self-test-token-not-a-real-one"
         served = {"webmap": WEBMAP_JSON}
@@ -1688,6 +1835,12 @@ def self_test():
                     # the self-test can read what went on the wire instead of
                     # trusting that it was built right.
                     self.send(200, json.dumps({"query": parts.query}))
+                elif item == "hostilemap":
+                    self.send(200, json.dumps({"operationalLayers": [{
+                        "title": "=HYPERLINK(1)", "popupInfo": {
+                            "expressionInfos": [{
+                                "name": "@SUM(1)",
+                                "expression": "-$feature.A"}]}}]}))
                 elif item == "notjson":
                     self.send(200, "<html>not json</html>", "text/html")
                 elif item == "arraydoc":
@@ -1804,6 +1957,21 @@ def self_test():
                          newline="") as handle:
                 check(len(list(csv.reader(handle))) == 11,
                       "which holds the header row and the ten expressions")
+            code, out = capture(lambda: main(["--portal", base, "--item",
+                                              "hostilemap", "--out", "q.csv",
+                                              "--apply"]))
+            with io.open("q.csv", "r", encoding=CSV_ENCODING,
+                         newline="") as handle:
+                portal_rows = list(csv.reader(handle))
+            check(code == 0 and len(portal_rows) == 2,
+                  "an item read from a portal that holds hostile text is "
+                  "written like any other")
+            check(portal_rows[1][COLUMNS.index("layer")] == "'=HYPERLINK(1)"
+                  and portal_rows[1][COLUMNS.index("name")] == "'@SUM(1)"
+                  and portal_rows[1][COLUMNS.index("expression")]
+                  == "'-$feature.A",
+                  "and its layer, name and expression are guarded on the "
+                  "way to disk  <-- pinned defect")
             code, out = capture(lambda: main(["--portal", base,
                                               "--item", "missing"]))
             check(code == 2 and "404" in out,
@@ -1855,15 +2023,18 @@ def self_test():
           "and a failure is printed as FAIL, so the transcript shows which "
           "assertion went red")
 
+    lines, _ = _verdict(2, ["one"])
+    check(lines == ["3 assertions, 1 failed", "  FAILED: one"],
+          "a failed assertion is listed by its label under a count that "
+          "includes it, so a red run says what went red")
+    check(_verdict(3, [])[1] == 0 and _verdict(2, ["one"])[1] == 1,
+          "and the exit status is 1 only when something failed")
+
     print("-" * 68)
-    total = passed[0] + len(failed)
-    if failed:
-        print("%d assertions, %d failed" % (total, len(failed)))
-        for label in failed:
-            print("  FAILED: %s" % label)
-        return 1
-    print("%d assertions, 0 failed" % total)
-    return 0
+    lines, status = _verdict(passed[0], failed)
+    for line in lines:
+        print(line)
+    return status
 
 
 # ----------------------------------------------------------------------- cli
@@ -2093,5 +2264,5 @@ def main(argv=None):
     return 0 if summary["worst"] == PORTABLE else 1
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # pragma: no cover
     sys.exit(main())

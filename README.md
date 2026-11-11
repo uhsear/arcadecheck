@@ -59,12 +59,19 @@ PASS  the layer name inside the rule is the guid the geodatabase stored, not the
 PASS  --apply is off by default, so nothing is written  <-- pinned defect
 PASS  --insecure is off by default, so tls is verified  <-- pinned defect
 ...
+PASS  text starting with an equals sign gets one apostrophe in front  <-- pinned defect
+PASS  text starting with a carriage return gets one apostrophe in front  <-- pinned defect
+PASS  the expression column is guarded when it starts with a tab  <-- pinned defect
+PASS  a number column stays a number even when it is negative  <-- pinned defect
+...
 PASS  a unique prefix of --apply, --ap, is refused rather than read as --apply, so a typo cannot write a file  <-- pinned defect
 ...
 PASS  there is no --password at all, because argv is readable by every process on the box  <-- pinned defect
 PASS  a portal url with no scheme is refused before any request is made, because urllib would quote the token back  <-- pinned defect
 PASS  and that mark is read as a mark rather than as the first character of broken json  <-- pinned defect
 PASS  and writes nothing  <-- pinned defect
+PASS  a source file named with an equals sign is guarded in the source column  <-- pinned defect
+PASS  no cell in the whole file starts with a character a spreadsheet runs as a formula  <-- pinned defect
 PASS  and has no blank line between rows, which is what newline='' prevents on windows  <-- pinned defect
 PASS  the header names every column in the order a reader expects, written out here rather than read back from COLUMNS  <-- pinned defect
 PASS  a second run refuses to overwrite the csv  <-- pinned defect
@@ -76,10 +83,11 @@ PASS  and a token the portal echoed back is not in the message  <-- pinned defec
 PASS  the token never reaches stdout  <-- pinned defect
 PASS  a --token on the command line beats a stale one left in the environment  <-- pinned defect
 PASS  and no credential reaches the csv on disk  <-- pinned defect
+PASS  and its layer, name and expression are guarded on the way to disk  <-- pinned defect
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
 PASS  the harness records a false check, a missing exception and a wrong exception as three failures, so a broken tool turns this self-test red  <-- pinned defect
 --------------------------------------------------------------------
-373 assertions, 0 failed
+471 assertions, 0 failed
 ```
 
 ## Requirements
@@ -171,6 +179,13 @@ The CSV has one row per expression: `source`, `document`, `where`, `layer`, `nam
 `reasons`, `calls`, `chars`, `lines`, `path` and the `expression` itself. `path` is the JSON path
 the expression was read from, so every row can be found again in the document it came from.
 
+Every text cell is guarded against spreadsheet formula injection. A cell that starts with `=`, `+`,
+`-`, `@`, a tab or a carriage return gets one apostrophe in front, so Excel reads it as text and
+does not run it. The text comes from documents and portals you did not write: a layer title of
+`=HYPERLINK(...)` is legal, and an Arcade expression that starts with a minus sign is ordinary.
+`chars` and `lines` are numbers and are never touched. To get the original text back, drop exactly
+one leading apostrophe. This tool does not read its own CSV back, so it has no reader to change.
+
 ## What it checks (or refuses)
 
 It collects Arcade from five places:
@@ -196,6 +211,14 @@ Each expression is rated on **what it calls**:
 
 The full list of names in each rating is at the top of the file, next to the reason printed for
 each one. Adding to it is the intended way to extend the tool.
+
+One guard is on the output side. The CSV is the only thing this tool writes, and it is written
+only with `--apply`. Every text column goes through `guard_cell` first, whatever put the text
+there: the document, the portal, the file name you passed, or a key in the JSON path. The
+character list is OWASP's. Its page recommends the single quote prefix used here, and it also
+warns that the prefix is not reliable in Excel after the file is saved and reopened, so treat the
+guard as a first line and not as a guarantee. A cell that starts with a space is not guarded,
+because a space is not on that list.
 
 Three things it refuses to be fooled by:
 
@@ -249,16 +272,56 @@ failed.
 - Nothing is executed. An expression that would fail at runtime rates the same as one that works.
 - The CSV is written as UTF-8 with a byte order mark, so Excel opens accented text correctly.
   A reader that does not expect the mark needs `encoding="utf-8-sig"`.
+- A guarded cell carries a leading apostrophe on disk, and a script that reads the CSV sees it.
+  The tool cannot tell that apostrophe from one already in the text, when the original started
+  with an apostrophe and then a formula character: such a cell is written as it came. A reader
+  that must be exact should treat a leading apostrophe followed by one of `=`, `+`, `-`, `@`, tab
+  or carriage return as the guard.
+- The guard stops a spreadsheet from running a cell on open. OWASP says the prefix can be lost
+  when Excel saves the file and it is opened again.
+- Only the Arcade facts that the official documentation confirmed are cited under Verification.
+  The function reference lists `FeatureSetByName` under its FeatureSet functions. The profile
+  guide named `$feature` and `$map` and did not name `$datastore`, `$layer`, `$editcontext`,
+  `$originalfeature` or `$aggregatedfeatures`, so those five ratings rest on earlier work and
+  were not re-verified in this release.
 
 ## Verification
 
-`--self-test` is 373 assertions with no network, no portal and no geodatabase. It runs green on
-Windows under `python 3.13`, on Ubuntu under `python 3.12`, on ArcGIS Pro's `python 3.13` and on
-a plain `python 3.9`, with the same count and the same transcript line for line. Branch coverage
-is 99%. What is left is three things that cannot run in a
-green offline run: the failure summary the self-test prints only when an assertion has
-already failed, the fallback in the helper that checks `argparse` refuses an unknown flag, and
-the `__main__` guard, which never fires when the file is imported by the coverage runner.
+`--self-test` is 471 assertions with no network, no portal and no geodatabase. It runs green on
+Windows under `python 3.13`, on ArcGIS Pro's `python 3.13.7`, on Windows under `python 3.9.25` and on Ubuntu under `python 3.12`,
+with the same count. The Windows 3.13 and Ubuntu 3.12 transcripts are identical line for line.
+Branch coverage is 100%. The one line outside it is the `__main__` guard, which carries
+`# pragma: no cover`, because the coverage runner starts the file and the guard never fires
+when it does. The 98 assertions added for the CSV guard and the summary are the same on every
+host. A tab or a carriage return cannot be in a Windows file name, so those two are exercised
+through the document text and through `csv_row`, and the file name case uses `=evil.json`.
+
+Each claim and where it was exercised:
+
+| Claim | Exercised by |
+|---|---|
+| Each of the six starting characters is guarded | `guard_cell`, six assertions, and a mutation run that removed the tab and then the carriage return from the list, which turned the self-test red both times |
+| Every text column is guarded | `csv_row`, ten columns by six characters |
+| Numbers stay numbers, even negative | `csv_row` with `chars` of -4, and the rows of a real file |
+| A written file has no cell that starts with a formula character | a real `--apply` run of a hostile document, read back with `csv.reader` |
+| A hostile source file name is guarded | the same run, with a file named `=evil.json` |
+| A hostile JSON key in `path` is guarded | a real run over a document with the key `=evil` |
+| Portal text is guarded | a real `--apply` run against a local `http.server` stub |
+| Nothing is written without `--apply`, and `--ap` is refused | unchanged, from the earlier assertions |
+| The summary names what failed | `_verdict`, which a green run cannot otherwise reach |
+
+Sources checked on 2026-11-11:
+
+- [OWASP, CSV Injection](https://owasp.org/www-community/attacks/CSV_Injection): the six
+  characters, the single quote prefix, and the warning that it is unreliable after Excel saves
+  and reopens the file.
+- [Python `csv` module](https://docs.python.org/3/library/csv.html): open the file with
+  `newline=''`. The page does not mention `utf-8-sig`. The byte order mark is this tool's choice
+  for Excel, and the self-test pins it.
+- [Arcade function reference](https://developers.arcgis.com/arcade/function-reference/):
+  `FeatureSetByName` is a FeatureSet function.
+- [Arcade profiles guide](https://developers.arcgis.com/arcade/guide/profiles/): `$feature` and
+  `$map` are profile variables, and which ones exist depends on the context.
 
 The attribute rule fixtures are real. A File Geodatabase was built with `arcpy`, six attribute
 rules were added to two feature classes, `gdbxray --json` read it back, and that output is what
