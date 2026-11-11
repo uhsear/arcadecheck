@@ -183,13 +183,13 @@ ESRI_ONLY_CALLS = {
     "$editcontext":
         "the attribute rule edit context",
     "$originalfeature":
-        "the pre-edit row, which only an attribute rule is given",
+        "the pre-edit row, which only an edit profile is given",
     "$featureset":
         "the whole layer behind the feature",
     "$aggregatedfeatures":
         "the cluster a drawn feature was aggregated into",
     "$targetdatastore":
-        "the target workspace of an attribute rule edit",
+        "the layers beside the target layer, which only a field mapping is given",
 }
 
 # What an expression calls that has an open-source equivalent, but not the same
@@ -248,6 +248,10 @@ def strip_noise(text):
     inside a comment or a literal are kept, so the blanked text has the same
     length and the same line numbering as what came in.
 
+    A template literal is blanked the same way, except that the code inside its
+    ${ } is kept, so a call there still counts and an apostrophe in the static
+    text around it does not open a string.
+
     An unterminated literal or block comment swallows the rest of the text. That
     is what the Arcade parser does with it too, and an expression that does not
     parse is not something this tool should paper over by guessing.
@@ -257,10 +261,29 @@ def strip_noise(text):
     out = []
     index = 0
     size = len(text)
+    # Each entry is [in_template, brace depth]. A template literal (backticks,
+    # Arcade 1.11 and later) is text with code embedded in ${ }, and the code
+    # can hold strings and further templates, so the scan keeps a stack.
+    stack = [[False, 0]]
     while index < size:
         char = text[index]
         after = text[index + 1] if index + 1 < size else ""
-        if char == "/" and after == "/":
+        if stack[-1][0]:
+            if char == "\\" and after:
+                out.append(" ")
+                out.append("\n" if after == "\n" else " ")
+                index += 2
+                continue
+            if char == "$" and after == "{":
+                out.append("  ")
+                stack.append([False, 0])
+                index += 2
+                continue
+            if char == "`":
+                stack.pop()
+            out.append("\n" if char == "\n" else " ")
+            index += 1
+        elif char == "/" and after == "/":
             while index < size and text[index] != "\n":
                 out.append(" ")
                 index += 1
@@ -290,7 +313,19 @@ def strip_noise(text):
                     break
                 out.append("\n" if text[index] == "\n" else " ")
                 index += 1
+        elif char == "`":
+            stack.append([True, 0])
+            out.append(" ")
+            index += 1
+        elif char == "}" and len(stack) > 1 and stack[-1][1] == 0:
+            stack.pop()
+            out.append(" ")
+            index += 1
         else:
+            if char == "{":
+                stack[-1][1] += 1
+            elif char == "}" and stack[-1][1]:
+                stack[-1][1] -= 1
             out.append(char)
             index += 1
     return "".join(out)
@@ -982,6 +1017,7 @@ def self_test():
     an item through the same urllib code path a real portal gets. No credential,
     no network and no geodatabase is needed for any of it.
     """
+    import runpy
     import shutil
     import tempfile
     import threading
@@ -1048,6 +1084,36 @@ def self_test():
           "the closing */ is blanked along with the comment")
     check(strip_noise("a/*b*/c/*d*/e") == "a     c     e",
           "two block comments in one line are both blanked")
+    tpl_apostrophe = ("var label = `${$feature.OWNER}'s parcel`;\n"
+                      "var fs = FeatureSetByName($map, 'Hydrants');\n"
+                      "return label + Count(fs);")
+    check(rate(tpl_apostrophe)["rating"] == ESRI_ONLY,
+          "an apostrophe in a template literal does not open a string that "
+          "hides the call after it  <-- pinned defect")
+    check(rate("return `calls FeatureSetByName(x) in text "
+               "${$feature.A}`;")["rating"] == PORTABLE,
+          "a name in the static text of a template literal is not a call  "
+          "<-- pinned defect")
+    check(rate("return `a ${ Count(FeatureSetByName($map, 'x')) } b`")["rating"]
+          == ESRI_ONLY,
+          "a call inside the ${ } of a template literal still counts")
+    check(rate("return `a ${ {x: 1}.x + `in ${'}'} ner` } b` + "
+               "Count(y)")["calls"] == ["Count"],
+          "templates nest, braces inside a string do not close the ${ }, and "
+          "the code after the outer template is read again")
+    check(strip_noise("`a\\`b` c").strip() == "c",
+          "an escaped backtick does not end a template literal")
+    check(strip_noise("`a\nb\\\nc`").count("\n") == 2,
+          "newlines inside a template literal, escaped or not, are kept")
+    check(strip_noise("`unterminated + FeatureSetByName(x)").strip() == "",
+          "an unterminated template swallows the rest, as a string does")
+    check(strip_noise("`unterminated ${ x").strip() == "x",
+          "and an unterminated ${ keeps its code, which is what was written")
+    check(strip_noise("x = {a: 1}; }").strip() == "x = {a: 1}; }",
+          "braces outside a template are left alone, balanced or not")
+    check(strip_noise("`${ // c`\n x }` y").split() == ["x", "y"],
+          "a comment inside the ${ } is blanked, and the backtick in it ends "
+          "nothing")
 
     # ---- what an expression calls
     check(find_calls("Count(x)") == ["Count"],
@@ -2041,6 +2107,14 @@ def self_test():
             raises(lambda: item_url("https://x", "abc\n"),
                    "an item id with a trailing newline is refused, because $ "
                    "matches before it  <-- pinned defect")
+            for bad_portal in ("https://user:hunter2pw@x", "https://u@x/p",
+                               "http://@x", "https://u:p@x:80/q"):
+                raises(lambda: item_url(bad_portal, "abc"),
+                       "a portal url with a user name or password is refused "
+                       "before urllib can quote it back  <-- pinned defect")
+            check(item_url("https://x/a@b", "abc")
+                  == "https://x/a@b/sharing/rest/content/items/abc/data",
+                  "an @ after the host part, in the path, is not a login")
             for bad_portal in ("https://x/portal ", "https://x/a b",
                                "https://x/\tp", "https://x/\np",
                                "https://x/\x7fp"):
@@ -2273,6 +2347,14 @@ def self_test():
     check(_verdict(3, [])[1] == 0 and _verdict(2, ["one"])[1] == 1,
           "and the exit status is 1 only when something failed")
 
+    # Loading the file as a module, not as the program, must run nothing. It
+    # also drives the false branch of the __main__ guard, which a run of the
+    # file as a script can never take, so no coverage pragma is needed there.
+    namespace = runpy.run_path(__file__, run_name="arcadecheck_not_main")
+    check(callable(namespace["main"]) and namespace["__name__"]
+          == "arcadecheck_not_main",
+          "loading the file under another name defines main and does not run it")
+
     print("-" * 68)
     lines, status = _verdict(passed[0], failed)
     for line in lines:
@@ -2348,6 +2430,10 @@ def item_url(portal, item_id):
     or a control character, so a typo in the portal name or a stray newline in
     an item id would otherwise print the token in a traceback. The id is
     matched with fullmatch because "$" also matches before a final newline.
+
+    A user name or password in the url ("https://user:pw@host") is refused for
+    the same reason: urllib never turns it into a login, and http.client quotes
+    the whole host part, password included, in the error it raises for it.
     """
     if not isinstance(portal, str) or not portal.lower().startswith(
             ("https://", "http://")):
@@ -2355,6 +2441,9 @@ def item_url(portal, item_id):
     if re.search(r"[\s\x00-\x1f\x7f]", portal):
         raise ValueError("portal url must not contain spaces or control "
                          "characters")
+    if "@" in re.split(r"[/?#]", portal.split("//", 1)[1], maxsplit=1)[0]:
+        raise ValueError("portal url must not carry a user name or password; "
+                         "give the token with --token or ARCADECHECK_TOKEN")
     if not isinstance(item_id, str) or not re.fullmatch(r"[A-Za-z0-9]+",
                                                          item_id):
         raise ValueError("item id must be letters and digits")
@@ -2545,5 +2634,5 @@ def main(argv=None):
     return 0 if summary["worst"] == PORTABLE else 1
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     sys.exit(main())

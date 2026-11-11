@@ -31,6 +31,7 @@ arcadecheck self-test: no portal, no geodatabase, no credentials
 --------------------------------------------------------------------
 PASS  a line comment is blanked out
 PASS  a division is not the start of a comment  <-- pinned defect
+PASS  an apostrophe in a template literal does not open a string that hides the call after it  <-- pinned defect
 PASS  a member called after a dot is not a call to a function of that name  <-- pinned defect
 PASS  the if of an if statement is not a call  <-- pinned defect
 ...
@@ -88,6 +89,7 @@ PASS  err.json is not called clean: exit 2 and the file is named  <-- pinned def
 PASS  and writes nothing  <-- pinned defect
 PASS  a source file named with an equals sign is guarded in the source column  <-- pinned defect
 PASS  no cell in the whole file starts with a character a spreadsheet runs as a formula  <-- pinned defect
+PASS  a portal url with a user name or password is refused before urllib can quote it back  <-- pinned defect
 PASS  and has no blank line between rows, which is what newline='' prevents on windows  <-- pinned defect
 PASS  the header names every column in the order a reader expects, written out here rather than read back from COLUMNS  <-- pinned defect
 PASS  a second run refuses to overwrite the csv  <-- pinned defect
@@ -106,13 +108,13 @@ PASS  and its layer, name and expression are guarded on the way to disk  <-- pin
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
 PASS  the harness records a false check, a missing exception and a wrong exception as three failures, so a broken tool turns this self-test red  <-- pinned defect
 --------------------------------------------------------------------
-527 assertions, 0 failed
+543 assertions, 0 failed
 ```
 
 ## Requirements
 
 Python 3.9 or newer. Standard library only: `argparse`, `csv`, `io`, `json`, `os`, `re`, `ssl`,
-`sys` and `urllib`, with `http.server`, `threading`, `tempfile` and `shutil` used inside the
+`sys` and `urllib`, with `http.server`, `runpy`, `threading`, `tempfile` and `shutil` used inside the
 self-test. It runs on ArcGIS Pro's Python and on a plain `python3`. `arcpy` is not used and the
 `arcgis` package is not needed.
 
@@ -247,14 +249,18 @@ Three things it refuses to be fooled by:
   is PORTABLE. The self-test pins both, on a real geodatabase's rules as well as on made up ones.
 - **A name inside a comment or a string is not a call.** Comments and string literals are blanked
   out before anything is searched for, so `// FeatureSetByName was removed here` rates PORTABLE.
-  Without that, a migration note in a comment costs somebody a week.
+  Without that, a migration note in a comment costs somebody a week. A template literal, the
+  text between backticks that Arcade has had since version 1.11, is blanked too, except for the
+  code inside its `${ }`. An apostrophe in `${$feature.OWNER}'s parcel` therefore opens no
+  string, and a call written after it is still found.
 - **A name after a dot is not a call.** `$feature.Buffer(3)` reads a field called `Buffer`. The
   geometry function of that name is `Buffer($feature, ...)`, at the start of the expression.
 
 The credential rules are the same ones the rest of this portfolio uses. There is no `--password`
 flag, because `argv` is readable by every process on the machine. The token can come from
 `ARCADECHECK_TOKEN` instead of the command line. A portal url with no scheme, a space or a control
-character in it, and an item id with a trailing newline, are refused before a request is built,
+character in it, a user name or password in it (`https://user:pw@host`), and an item id with a
+trailing newline, are refused before a request is built,
 because `urllib` and `http.client` quote the whole url into their own exceptions and that url
 carries the token. A token that a portal echoes back inside an error message is masked before the
 message is printed, both as typed and as sent (percent encoded). A truncated answer, a read
@@ -267,7 +273,7 @@ timeout and a reply that is not HTTP exit 2 with a message that has no token in 
 | 0 | Every expression found is PORTABLE, in documents the tool recognised. A web map, dashboard, form or gdbxray report with no Arcade in it counts. |
 | 1 | At least one expression is PORTABLE WITH WORK or ESRI ONLY. |
 | 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count does not match the rules read. The file is named on stderr. |
-| 64 | Usage error: no input, an `--item` with no `--portal`, or a portal url with no scheme. |
+| 64 | Usage error: no input, an `--item` with no `--portal`, or a portal url with no scheme or with a user name or password in it. |
 
 Exit 1 is the normal answer for a real organization. It means there is work, not that the run
 failed.
@@ -301,13 +307,17 @@ failed.
   or carriage return as the guard.
 - The guard stops a spreadsheet from running a cell on open. OWASP says the prefix can be lost
   when Excel saves the file and it is opened again.
-- Only the Arcade facts that the official documentation confirmed are cited under Verification.
-  The function reference lists `FeatureSetByName` and `FeatureSetByRelationshipClass` under its
-  FeatureSet functions and `KnowledgeGraphByPortalItem` under its knowledge graph functions. The
-  profile guide named `$feature` and `$map` and did not name `$datastore`, `$layer`,
-  `$editcontext`, `$originalfeature` or `$aggregatedfeatures`, so those five ratings rest on
-  earlier work and were not re-verified in this release. The profile guide and the Python pages
-  below were not re-fetched in this release.
+- The ratings for `$map`, `$datastore`, `$layer`, `$editcontext` and `$originalfeature` are
+  confirmed against the profile pages named under Verification. The others rest on earlier work. `$aggregatedfeatures` is named on none of those pages, so its
+  ESRI ONLY rating is not confirmed. `$view` is named on the popup, labeling and visualization
+  pages, and `$camera` and `$sensor` on none. None of the three is in the ESRI ONLY list, so an
+  expression that reads one of them rates PORTABLE.
+- The rater finds calls by pattern and does not parse Arcade. A string literal or block comment
+  that is never closed hides every call after it, so `var a = "hello` followed by a
+  `FeatureSetByName` call rates PORTABLE and exits 0. A space between a dot and a name, as in
+  `$feature . Buffer(3)`, is read as a geometry call and rates PORTABLE WITH WORK. Arcade's page
+  on template literals does not say how a backtick is escaped, so an escaped backtick in one is read the way
+  JavaScript reads it.
 - The guard covers `=`, `+`, `-`, `@`, tab and carriage return. A cell that starts with a line
   feed or a full-width `=`, `+`, `-` or `@` is written as it came, although OWASP lists those too.
 - The CSV holds the full text of every expression, including any key, token or password written
@@ -321,8 +331,23 @@ failed.
   a dangling symlink at `--out` is followed. A write that fails halfway leaves a partial CSV that
   the next run refuses to overwrite. `--apply` with no `--out` writes nothing and says nothing.
 - A JSON document nested deeper than the Python recursion limit ends in a traceback with exit
-  code 1, which is also the code for "findings exist". The whole portal answer is read into
-  memory with no size limit.
+  code 1, which is also the code for "findings exist", not 2. A 5000 deep JSON list does it. The
+  whole portal answer is read into memory with no size limit.
+- A lone UTF-16 surrogate in a JSON string, such as a title of `\ud800`, makes the CSV write
+  raise `UnicodeEncodeError`. The run ends in a traceback with exit code 1 and leaves a CSV that
+  holds only the header row, which the next run refuses to overwrite.
+- A JSON `name` or `layer` that is not a string, such as a number, a list or an object in a
+  `gdbxray` report, is written as its Python text and without the guard. It cannot start a
+  formula, but the cell is not the original value. A negative number becomes the text `-5`.
+- A `gdbxray` report whose `counts.rules` is not an integer, such as the string `"x"`, skips the
+  rule count check. If its datasets hold nothing this tool reads, the run reports zero
+  expressions and exits 0.
+- A flag typo that carries its value in one word, such as `--tokn=SECRET`, is quoted back in
+  `argparse`'s "unrecognized arguments" error on stderr, so a typed token can reach the terminal
+  that way. `argparse` usage errors, such as an unknown flag, `--ap` or a flag with no value,
+  exit 2 and not 64, although 2 also means that a read or write step failed.
+- `urllib` follows redirects, and the token stays in the query string of the `Location` the
+  portal sends. A redirect to another host, or from `https` to `http`, forwards the token.
 - The dashboard shape is matched by key name only: `expression` anywhere under a dashboard
   document is collected. It was not checked against Esri's dashboard specification, and the
   dashboard fixture in the self-test is a stand-in.
@@ -332,16 +357,18 @@ failed.
 
 ## Verification
 
-`--self-test` is 527 assertions with no network, no portal and no geodatabase. It runs green with
-the same count on Windows under `python 3.13.2`, on Windows under `python 3.12.10` and
-`python 3.11.8`, on ArcGIS Pro's `python 3.13.7`, and on Ubuntu under `python 3.12.3`. The Windows
-3.13 and Ubuntu 3.12 transcripts are identical line for line. No Python 3.9 interpreter was
-available, so the 3.9 claim rests on parsing the file with `ast.parse(feature_version=(3, 9))`,
-on the absence of f-strings, and on the stated minimum, not on a run. Branch coverage is 100%. The one line outside it is the `__main__` guard, which carries
-`# pragma: no cover`, because the coverage runner starts the file and the guard never fires
-when it does. Of the 154 assertions added since the 373 before the CSV guard, 98 cover the guard
-and 56 cover the false-clean and portal-failure fixes. They are the same on every host. A tab or a carriage return cannot be in a Windows file name, so those two are exercised
-through the document text and through `csv_row`, and the file name case uses `=evil.json`.
+`--self-test` is 543 assertions with no network, no portal and no geodatabase. It runs green with
+the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.11.15`, `3.12.10`,
+`3.13.2` and `3.13.7`, the last one from ArcGIS Pro's `arcgispro-py3` environment, and on Ubuntu
+under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts are identical line for line.
+Branch coverage is 100%, with no line excluded and no `pragma`: 1155 statements and 294
+branches. The self-test loads the file once with `runpy` under another name, which is the only
+way to take the false branch of the `__main__` guard, because a run as a script always takes the
+true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
+170 assertions added since the 373 before the CSV guard, 98 cover the guard and 72 cover the
+false-clean, template literal and portal-failure fixes. They are the same on every host. A tab or
+a carriage return cannot be in a Windows file name, so those two are exercised through the
+document text and through `csv_row`, and the file name case uses `=evil.json`.
 
 Each claim and where it was exercised:
 
@@ -359,25 +386,42 @@ Each claim and where it was exercised:
 | A document that was read and held no Arcade is counted | a web map with an empty layer list, `1 document(s)` |
 | A non-UTF-8 file names itself | a real Latin-1 file |
 | A space, control character or trailing newline in the portal or the id never reaches `urllib`, so no token is printed | `item_url` and `main`, with the token as a search string in the output |
+| A user name or password in the portal url is refused with exit 64 and is never printed | `item_url`, three urls, and the same refusal through `main` |
+| An apostrophe in a template literal hides no call after it, and a name in its text is no call | `rate` over a popup line `${$feature.OWNER}'s parcel` followed by a `FeatureSetByName` call, and over a name written as plain text |
 | A truncated answer, a read timeout, a non-HTTP reply and a numeric error message exit 2 with no token | a local `http.server` stub, one item for each |
 | A token echoed back percent encoded is masked | the same stub, with a token that needs encoding |
 | `FeatureSetByRelationshipClass` and `KnowledgeGraphByPortalItem` are ESRI ONLY | `rate`, beside the other esri only calls |
 | The summary names what failed | `_verdict`, which a green run cannot otherwise reach |
 
-Sources. OWASP and the function reference were re-checked on 2026-11-11. The Python csv page and the profiles guide were not re-fetched in this release:
+Sources, all re-fetched on 2026-11-11:
 
 - [OWASP, CSV Injection](https://community.owasp.org/attacks/CSV_Injection): the characters that
   start a formula, which include the six guarded here plus a line feed and the full-width
   forms; the single quote prefix as one mitigation and a tab for Excel as the preferred one; and
   the warning that none is reliable after Excel saves and reopens the file.
-- [Python `csv` module](https://docs.python.org/3/library/csv.html): open the file with
-  `newline=''`. The page does not mention `utf-8-sig`. The byte order mark is this tool's choice
-  for Excel, and the self-test pins it.
+- [Python `csv` module](https://docs.python.org/3/library/csv.html): "If csvfile is a file object,
+  it should be opened with newline=''". The page does not mention `utf-8-sig`. The byte order
+  mark is this tool's choice for Excel, and the self-test pins it.
 - [Arcade function reference](https://developers.arcgis.com/arcade/function-reference/):
   `FeatureSetByName`, `FeatureSetByRelationshipName` and `FeatureSetByRelationshipClass` are
   FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function.
-- [Arcade profiles guide](https://developers.arcgis.com/arcade/guide/profiles/): `$feature` and
-  `$map` are profile variables, and which ones exist depends on the context.
+- [Arcade template literals](https://developers.arcgis.com/arcade/guide/template-literals/):
+  introduced at version 1.11, enclosed by backticks, and "placeholders ... indicated by a dollar
+  sign and curly braces". The page does not say how a backtick is escaped.
+- Arcade profile pages, each with a "Profile variables" table. `$map` is named on the
+  [popup](https://developers.arcgis.com/arcade/profiles/popup/) and
+  [form calculation](https://developers.arcgis.com/arcade/profiles/form-calculation/) pages.
+  `$datastore` is named on the popup, form calculation,
+  [attribute rule calculation](https://developers.arcgis.com/arcade/profiles/attribute-rule-calculation/)
+  and [field calculation](https://developers.arcgis.com/arcade/profiles/field-calculation/)
+  pages. `$layer` is named on the popup and form calculation pages. `$editcontext` is named on
+  the attribute rule calculation and form calculation pages. `$originalFeature` and
+  `$featureSet` are named on the attribute rule calculation and
+  [form constraint](https://developers.arcgis.com/arcade/profiles/form-constraint/) pages.
+  `$targetDatastore` is named on the
+  [field mapping](https://developers.arcgis.com/arcade/profiles/field-mapping/) page. A search of
+  every profile page listed in the [profiles index](https://developers.arcgis.com/arcade/profiles/)
+  found no `$aggregatedFeatures`, `$camera` or `$sensor`.
 
 The attribute rule fixtures are real. A File Geodatabase was built with `arcpy`, six attribute
 rules were added to two feature classes, `gdbxray --json` read it back, and that output is what
