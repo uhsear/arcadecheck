@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-583 assertions, 0 failed
+599 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 587 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 603 lines long.
 
 ## Requirements
 
@@ -126,7 +126,7 @@ Documents on disk, a portal, or both in one run. Nothing is written without `--a
 ```
 python arcadecheck.py webmap.json dashboard.json form.json rules.json
 python arcadecheck.py webmap.json --out arcade.csv --apply
-python arcadecheck.py --portal https://county.maps.arcgis.com --item 1a2b3c --item 4d5e6f
+python arcadecheck.py --portal https://example.maps.arcgis.com --item 1a2b3c --item 4d5e6f
 ```
 
 | Flag | Default | What it does |
@@ -172,15 +172,16 @@ Each expression is rated on **what it calls**:
 
 | Rating | Means | Examples of what earns it |
 |---|---|---|
-| `ESRI ONLY` | There is no equivalent outside ArcGIS. | `FeatureSetByName`, `FeatureSetByPortalItem`, `FeatureSetByRelationshipName`, `FeatureSetByRelationshipClass`, `KnowledgeGraphByPortalItem`, `Portal()`, `GetUser`, `$map`, `$datastore`, `$layer`, `$editcontext`, `$originalfeature`, `$aggregatedfeatures` |
-| `PORTABLE WITH WORK` | Something else does this, under another name. | geometry predicates and operations (shapely and GEOS), geodesic measurement (pyproj or geographiclib), domain and subtype lookups (rebuild as a table), attachments |
+| `ESRI ONLY` | There is no equivalent outside ArcGIS. | `FeatureSetByName`, `FeatureSetByPortalItem`, `FeatureSetByRelationshipName`, `FeatureSetByRelationshipClass`, `KnowledgeGraphByPortalItem`, `Portal()`, `GetUser`, `$map`, `$datastore`, `$layer`, `$editcontext`, `$originalfeature`, `$aggregatedfeatures`, `GetFeatureSet`, `GetFeatureSetInfo`, `GdbVersion` |
+| `PORTABLE WITH WORK` | Something else does this, under another name. | geometry predicates and operations (shapely and GEOS), geodesic measurement (pyproj or geographiclib), domain and subtype lookups including `FilterBySubtypeCode` (rebuild as a table), attachments |
 | `PORTABLE` | It moves as it is. | arithmetic and text over the row's own fields, `IIf`, `When`, `Count`, `Filter`, date formatting |
 
 The full list of names in each rating is at the top of the file, next to the reason printed for
 each one. Adding to it is the intended way to extend the tool.
 
 One guard is on the output side. The CSV is the only thing this tool writes, and it is written
-only with `--apply`. Every text column goes through `guard_cell` first, whatever put the text
+only with `--apply`. Every text column goes through `guard_cell` first, when the value is a string (see Limits for
+the one case where it is not), whatever put the text
 there: the document, the portal, the file name you passed, or a key in the JSON path. The
 six characters are the ones this tool guards. OWASP's page lists those six and also a line feed
 and the full-width forms of `=`, `+`, `-` and `@`, which are not guarded here. The single quote
@@ -211,7 +212,7 @@ The credential rules are the same ones the rest of this portfolio uses. There is
 flag, because `argv` is readable by every process on the machine. The token can come from the
 first line of standard input with `--token-stdin`, or from `ARCADECHECK_TOKEN`, instead of the
 command line. `--token` still works and prints a warning. A mistyped flag that carries a value in
-one word, such as `--tokn=SECRET`, is refused with the value replaced by `[redacted]`. A portal url with no scheme, a space or a control
+one word, such as `--tokn=SECRET`, is refused with the value replaced by `[redacted]`, and a glued one with no `=`, such as `--tokenSECRET`, is refused with the whole argument replaced by `[redacted]`. A portal url with no scheme, a space or a control
 character in it, a user name or password in it (`https://user:pw@host`), and an item id with a
 trailing newline, are refused before a request is built,
 because `urllib` and `http.client` quote the whole url into their own exceptions and that url
@@ -300,9 +301,20 @@ failed.
 - A `gdbxray` report whose `counts.rules` is not an integer, such as the string `"x"`, skips the
   rule count check. If its datasets hold nothing this tool reads, the run reports zero
   expressions and exits 0.
+- A token that a portal echoes back in lowercase percent-escapes, or in any other re-encoding, is
+  not masked in the error message. Only the raw token and the uppercase percent-encoded form are.
+- If standard output is closed early, for example by `head`, the run ends in a traceback with exit
+  code 1 or 120, so do not pipe the report into a reader that stops early when the exit code
+  matters.
+- A document that repeats a key inside one object is read with the last value only, so an earlier
+  expression under that key is not collected.
+- For a layer inside a group, the `layer` column names the group and not the sublayer, although the
+  rating is read from the sublayer's own expression.
+- When standard output is redirected, Windows gives Python the ANSI code page, so an accent is
+  escaped rather than printed. No Microsoft page is cited for that.
 - A flag typo that carries its value in one word, such as `--tokn=SECRET`, is refused with the
-  value hidden. A single dash option with a glued value, such as `-xSECRET`, is not hidden, and
-  no such option exists. `argparse` usage errors, such as an unknown flag, `--ap` or a flag with
+  value hidden. A glued typo, such as `--tokenSECRET` or `-tokenSECRET`, is refused with the whole
+  argument hidden, so the message no longer names the flag you mistyped. `argparse` usage errors, such as an unknown flag, `--ap` or a flag with
   no value, exit 2 and not 64, although 2 also means that a read or write step failed.
 - `urllib` follows any redirect the portal sends, including one to another host or from `https`
   to `http`, and with `--insecure` the redirected request is unverified too. The tool adds no
@@ -339,19 +351,21 @@ failed.
 
 ## Verification
 
-`--self-test` is 583 assertions with no network, no portal and no geodatabase. It runs green with
+`--self-test` is 599 assertions with no network, no portal and no geodatabase. It runs green with
 the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
-`3.13.7`, the last two of which are in a cloned ArcGIS Pro conda environment, and on Ubuntu under
-`python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts are identical line for line.
+`3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
+a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
+are identical apart from line endings.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1257 statements and 312
+Branch coverage is 100%, with no line excluded and no `pragma`: 1261 statements and 314
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-210 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
-false-clean, template literal and portal-failure fixes, and 40 cover the unclosed-literal,
-geometry-function, token and proxy fixes. They are the same on every host. A tab or
+226 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
+geometry-function, token and proxy fixes, and 16 cover the featureset-function rating and the
+glued-flag redaction. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -380,7 +394,8 @@ Each claim and where it was exercised:
 | An expression with an unclosed string, comment or template is never rated PORTABLE, and a call a stray quote would hide still counts | `rate` over five unclosed shapes, and `main` over two real files, which exit 1 |
 | All 15 geometry functions that were rated PORTABLE are PORTABLE WITH WORK | `rate`, one assertion per function |
 | A token can be given on standard input, and `--token` warns | `read_token`, and `main` against the loopback stub, which accepts only the right token |
-| A mistyped token flag is not echoed back | `_parse` with `--tokn=SECRET123`, checked on the captured stderr |
+| A mistyped token flag is not echoed back | `_parse` with `--tokn=SECRET123`, `--tokenSECRET456` and `-tokenSECRET456`, checked on the captured stderr |
+| `GetFeatureSet`, `GetFeatureSetInfo` and `GdbVersion` are ESRI ONLY, and `FilterBySubtypeCode` is PORTABLE WITH WORK | `rate`, beside the other calls of each rating, and their commented and quoted twins |
 | A redirect carries the token only when the portal's `Location` does | two redirect items on the loopback stub |
 | A proxy in the environment does not break the self-test | `fetch_item` against the stub with `HTTP_PROXY` set to a dead address, and the same call with the default proxy handling, which fails as expected |
 
@@ -400,7 +415,13 @@ Sources, all re-fetched on 2026-11-11:
   `MeasureToCoordinate`, `NearestCoordinate`, `NearestVertex`, `PointToCoordinate`,
   `RingIsClockwise`, `SetGeometry` and `Simplify`, which this tool rates PORTABLE WITH WORK.
   `FeatureSetByName`, `FeatureSetByRelationshipName` and `FeatureSetByRelationshipClass` are
-  FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function.
+  FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function. The
+  [FeatureSet functions](https://developers.arcgis.com/arcade/function-reference/featureset_functions/)
+  page, fetched on 2026-11-11, describes `GetFeatureSet` as getting "the FeatureSet in which the
+  input feature belongs", `GetFeatureSetInfo` as metadata "for the original source database and
+  service", `GdbVersion` as the name of the "current geodatabase version" and
+  `FilterBySubtypeCode` as a feature set of the features "matching the given subtype code".
+  This tool rates the first three ESRI ONLY and the last PORTABLE WITH WORK.
 - [Arcade template literals](https://developers.arcgis.com/arcade/guide/template-literals/):
   introduced at version 1.11, enclosed by backticks, and "placeholders ... indicated by a dollar
   sign and curly braces". The page does not say how a backtick is escaped.

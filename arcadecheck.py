@@ -30,7 +30,7 @@ that, so this tool consumes its --json output instead:
     python arcadecheck.py --self-test
     python arcadecheck.py webmap.json dashboard.json rules.json
     python arcadecheck.py webmap.json --out arcade.csv --apply
-    python arcadecheck.py --portal https://county.maps.arcgis.com --item 1a2b3c
+    python arcadecheck.py --portal https://example.maps.arcgis.com --item 1a2b3c
 
 Exit codes: 0 every expression is portable, 1 at least one is not, 2 a read or
 write step failed, 64 usage error.
@@ -170,6 +170,12 @@ ESRI_ONLY_CALLS = {
         "walks a utility network association",
     "featuresetbyid":
         "reads a layer out of the map by layer id",
+    "getfeatureset":
+        "reads the whole layer or table the feature belongs to",
+    "getfeaturesetinfo":
+        "reads metadata about the source database and service of a layer",
+    "gdbversion":
+        "reads the geodatabase version name, which only a geodatabase has",
     "portal":
         "names an ArcGIS portal to read from",
     "getuser":
@@ -231,6 +237,8 @@ for _name in ("domain", "domainname", "domaincode", "subtypes", "subtypecode",
 WITH_WORK_CALLS["featureset"] = (
     "builds a feature set from Esri feature JSON; the JSON travels, the "
     "constructor does not")
+WITH_WORK_CALLS["filterbysubtypecode"] = (
+    "filters by a geodatabase subtype code; rebuild the subtype as a table")
 WITH_WORK_CALLS["schema"] = "returns an Esri field schema object"
 WITH_WORK_CALLS["attachments"] = (
     "reads attachments, which are a geodatabase table plus a blob store")
@@ -707,8 +715,9 @@ def guard_cell(value):
     """A text cell with one apostrophe in front when a spreadsheet would run it.
 
     Only the first character matters. A number, or text that starts with
-    anything else, comes back as it came in. Dropping exactly one leading
-    apostrophe gives the original text back.
+    anything else, comes back as it came in. Dropping one leading apostrophe
+    undoes the guard, except for original text that already started with an
+    apostrophe and then a formula character, which is written unguarded.
     """
     if isinstance(value, str) and value.startswith(FORMULA_STARTS):
         return "'" + value
@@ -865,7 +874,7 @@ DASHBOARD_JSON = r"""
      "dataSource": {"type": "featureServiceDataSource", "itemId": "ab12cd34"}},
     {"type": "arcadeDataset", "name": "expr",
      "dataSource": {"type": "arcadeDataSource",
-      "expression": "var fs = FeatureSetByPortalItem(Portal(\"https://county.maps.arcgis.com\"), \"ab12cd34\", 0);\nreturn Count(fs);"}}
+      "expression": "var fs = FeatureSetByPortalItem(Portal(\"https://example.maps.arcgis.com\"), \"ab12cd34\", 0);\nreturn Count(fs);"}}
    ]
   },
   {
@@ -1248,7 +1257,7 @@ def self_test():
         ("KnowledgeGraphByPortalItem('ab12cd34')",
          "KnowledgeGraphByPortalItem"),
         ("FeatureSetById($map, '0')", "FeatureSetById"),
-        ("Portal('https://county.maps.arcgis.com')", "Portal"),
+        ("Portal('https://example.maps.arcgis.com')", "Portal"),
         ("GetUser($map).username", "GetUser"),
         ("$map", "$map"),
         ("$datastore", "$datastore"),
@@ -1257,6 +1266,10 @@ def self_test():
         ("$originalfeature.NAME", "$originalfeature"),
         ("Count($featureset)", "$featureset"),
         ("Count($aggregatedfeatures)", "$aggregatedfeatures"),
+        ("var fs = GetFeatureSet($feature, 'x'); return Count(fs);",
+         "GetFeatureSet"),
+        ("GetFeatureSetInfo(fs).serviceUrl", "GetFeatureSetInfo"),
+        ("return GdbVersion($feature)", "GdbVersion"),
     ]
     for expression, name in esri:
         rated = rate(expression)
@@ -1285,6 +1298,7 @@ def self_test():
         ("SubtypeName($feature)", "SubtypeName", "table"),
         ("Attachments($feature)", "Attachments", "blob store"),
         ("Schema($feature)", "Schema", "schema"),
+        ("FilterBySubtypeCode(fs, 1)", "FilterBySubtypeCode", "table"),
     ]
     for expression, name, word in work:
         rated = rate(expression)
@@ -1864,6 +1878,11 @@ def self_test():
     check(code == 2 and "--tokn" in out and "SECRET123" not in out,
           "a mistyped token flag is refused without quoting its value back  "
           "<-- pinned defect")
+    for glued in ("--tokenSECRET456", "-tokenSECRET456"):
+        code, out = capture(lambda: refused([glued, "a.json"]))
+        check(code == 2 and "SECRET456" not in out and "[redacted]" in out,
+              "a flag with its value glued on, %s, is refused without "
+              "quoting it back  <-- pinned defect" % glued[:2])
     code, out = capture(lambda: refused(["--apply=SECRET123"]))
     check(code == 2 and "SECRET123" not in out,
           "and so is a value given to a flag that takes none  "
@@ -1881,7 +1900,8 @@ def self_test():
 
     code, out = capture(parse_nonsense)
     check(code == 2, "an unknown flag is refused")
-    check("nonsense" in out, "and argparse says which flag it was")
+    check("unrecognized arguments" in out and "nonsense" not in out,
+          "and says so without quoting it, since it may carry a secret")
 
     # ---- the command line, end to end
     here = os.getcwd()
@@ -1913,7 +1933,7 @@ def self_test():
         check(code == 64 and "at least one --item" in out,
               "a portal with no item is a usage error, even beside a file "
               "that would have read cleanly")
-        code, out = capture(lambda: main(["--portal", "county.maps.arcgis.com",
+        code, out = capture(lambda: main(["--portal", "example.maps.arcgis.com",
                                           "--item", "abc"]))
         check(code == 64,
               "a portal url with no scheme is refused before any request is "
@@ -2227,7 +2247,7 @@ def self_test():
                   "the item data url is built from the portal and the id")
             check(item_url("https://x/", "abc") == item_url("https://x", "abc"),
                   "a trailing slash on the portal makes no difference")
-            raises(lambda: item_url("county.maps.arcgis.com", "abc"),
+            raises(lambda: item_url("example.maps.arcgis.com", "abc"),
                    "a portal url with no scheme is refused")
             raises(lambda: item_url("ftp://x", "abc"),
                    "and so is a scheme that is not http")
@@ -2705,15 +2725,17 @@ class _Parser(argparse.ArgumentParser):
     """argparse, except that it never quotes a flag's value back at the user.
 
     A mistyped token flag such as --tokn=SECRET is "unrecognized", and argparse
-    prints it whole. The value could be a credential, so it is hidden.
+    prints it whole. The value could be a credential, so it is hidden. A flag
+    with its value glued on, such as --tokenSECRET, has no "=" to cut at, so the
+    whole argument is hidden.
     """
 
     def parse_args(self, args=None, namespace=None):
         namespace, extras = self.parse_known_args(args, namespace)
         if extras:
             self.error("unrecognized arguments: %s" % " ".join(
-                arg.split("=", 1)[0] + "=[redacted]"
-                if arg.startswith("-") and "=" in arg else arg
+                arg.split("=", 1)[0] + "=[redacted]" if "=" in arg
+                else "[redacted]" if arg.startswith("-") else arg
                 for arg in extras))
         return namespace
 
