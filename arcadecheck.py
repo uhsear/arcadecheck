@@ -192,6 +192,8 @@ ESRI_ONLY_CALLS = {
         "the pre-edit row, which only an edit profile is given",
     "$featureset":
         "the whole layer behind the feature",
+    "$view":
+        "the map view the popup is shown in, which only a 2D MapView supplies",
     "$aggregatedfeatures":
         "the cluster a drawn feature was aggregated into",
     "$targetdatastore":
@@ -908,8 +910,8 @@ FORM_JSON = r"""
 """
 
 # Real gdbxray --json output, from a real File Geodatabase built with arcpy for
-# this self-test. Six attribute rules on two feature classes, byte for byte as
-# gdbxray printed them, with the field lists and the domain and relationship
+# this self-test. Six attribute rules on two feature classes, trimmed
+# gdbxray output, with the field lists and the domain and relationship
 # sections cut out because nothing here reads them.
 #
 # The GUID inside the FeatureSetByName calls is not a typo. It is what ArcGIS
@@ -1266,6 +1268,7 @@ def self_test():
         ("$originalfeature.NAME", "$originalfeature"),
         ("Count($featureset)", "$featureset"),
         ("Count($aggregatedfeatures)", "$aggregatedfeatures"),
+        ("return $view.scale", "$view"),
         ("var fs = GetFeatureSet($feature, 'x'); return Count(fs);",
          "GetFeatureSet"),
         ("GetFeatureSetInfo(fs).serviceUrl", "GetFeatureSetInfo"),

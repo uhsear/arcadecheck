@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-599 assertions, 0 failed
+603 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 603 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 607 lines long.
 
 ## Requirements
 
@@ -172,7 +172,7 @@ Each expression is rated on **what it calls**:
 
 | Rating | Means | Examples of what earns it |
 |---|---|---|
-| `ESRI ONLY` | There is no equivalent outside ArcGIS. | `FeatureSetByName`, `FeatureSetByPortalItem`, `FeatureSetByRelationshipName`, `FeatureSetByRelationshipClass`, `KnowledgeGraphByPortalItem`, `Portal()`, `GetUser`, `$map`, `$datastore`, `$layer`, `$editcontext`, `$originalfeature`, `$aggregatedfeatures`, `GetFeatureSet`, `GetFeatureSetInfo`, `GdbVersion` |
+| `ESRI ONLY` | There is no equivalent outside ArcGIS. | `FeatureSetByName`, `FeatureSetByPortalItem`, `FeatureSetByRelationshipName`, `FeatureSetByRelationshipClass`, `KnowledgeGraphByPortalItem`, `Portal()`, `GetUser`, `$map`, `$datastore`, `$layer`, `$editcontext`, `$originalfeature`, `$view`, `$aggregatedfeatures`, `GetFeatureSet`, `GetFeatureSetInfo`, `GdbVersion` |
 | `PORTABLE WITH WORK` | Something else does this, under another name. | geometry predicates and operations (shapely and GEOS), geodesic measurement (pyproj or geographiclib), domain and subtype lookups including `FilterBySubtypeCode` (rebuild as a table), attachments |
 | `PORTABLE` | It moves as it is. | arithmetic and text over the row's own fields, `IIf`, `When`, `Count`, `Filter`, date formatting |
 
@@ -263,9 +263,10 @@ failed.
   when Excel saves the file and it is opened again.
 - The ratings for `$map`, `$datastore`, `$layer`, `$editcontext` and `$originalfeature` are
   confirmed against the profile pages named under Verification. The others rest on earlier work. `$aggregatedfeatures` is named on none of those pages, so its
-  ESRI ONLY rating is not confirmed. `$view` is named on the popup, labeling and visualization
-  pages, and `$camera` and `$sensor` on none. None of the three is in the ESRI ONLY list, so an
-  expression that reads one of them rates PORTABLE.
+  ESRI ONLY rating is not confirmed. `$view` is ESRI ONLY: the popup page lists it as a
+  dictionary that is "only supported in 2D MapViews", so `$view.scale` does not move as it is.
+  `$camera` and `$sensor` are named on none of those pages and are not in the ESRI ONLY list, so
+  an expression that reads one of them rates PORTABLE. So do `$graph` and `$userInput`.
 - The rater finds calls by pattern and does not parse Arcade. It cannot tell whether an
   expression is valid, so a string or comment that is never closed makes the rating a conservative
   one, not a certain one: see the fourth item under "Four things it refuses to be fooled by". A
@@ -284,7 +285,32 @@ failed.
   proxy on the way. Esri's REST pages describe a token in a request header as well; this tool
   does not use that.
 - Use an `https://` portal. With `http://` the token travels unencrypted in the query string.
-- `--insecure` turns certificate checks off without a warning, and the token is still sent.
+- `--insecure` turns certificate checks off without a warning, and the token is still sent. The
+  self-test checks only that the SSL context has verification off, because the portal stub speaks
+  plain `http` and the standard library cannot make a certificate. A TLS handshake, with and
+  without `--insecure`, was run by hand against a local self-signed server and not in the
+  self-test.
+- A word typed after a switch that takes no value, such as a token after `--token-stdin`,
+  `--insecure` or `--all`, is read as a file name and printed in the "could not read" error. Do
+  not type a token after those switches.
+- A non-numeric port in `--portal` is quoted back in the error message. The token itself is never
+  in that text.
+- A redirect to an `ftp://` address is followed as well as `http` and `https` redirects, and the
+  error message for a failed one has no detail.
+- The token from `ARCADECHECK_TOKEN` is used exactly as set, with no trimming, so a trailing
+  newline or space in it makes the portal refuse it.
+- The flag `--ap` is refused with exit code 2 and nothing written, but the message says
+  "unrecognized arguments: [redacted]", so it does not name the flag that was mistyped.
+- Track functions such as `TrackCurrentSpeed` and `TrackWindow`, `ExecuteSQL` and `QueryGraph`
+  are in none of the rater's lists and rate PORTABLE, although they exist only in an Esri
+  profile or database.
+- The claim that ArcGIS rewrites a layer name into a GUID when an attribute rule is saved rests
+  on one recorded geodatabase and no Esri page.
+- The key locations the collectors read (`popupInfo.expressionInfos`,
+  `labelExpressionInfo.expression`, `valueExpression`, `formInfo.expressionInfos`) come from
+  earlier work and are not cited to the web map specification. The dashboard shape is the same.
+- A tab or a carriage return cannot be in a Windows file name, and no Microsoft page is cited for
+  that. The same is true of Excel opening accented text correctly after a byte order mark.
 - The `--out` check and the write are two steps, so a file created between them is overwritten, and
   a dangling symlink at `--out` is followed. A write that fails halfway leaves a partial CSV that
   the next run refuses to overwrite. `--apply` with no `--out` writes nothing and says nothing.
@@ -351,7 +377,7 @@ failed.
 
 ## Verification
 
-`--self-test` is 599 assertions with no network, no portal and no geodatabase. It runs green with
+`--self-test` is 603 assertions with no network, no portal and no geodatabase. It runs green with
 the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
@@ -362,10 +388,10 @@ Branch coverage is 100%, with no line excluded and no `pragma`: 1261 statements 
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-226 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+230 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
-geometry-function, token and proxy fixes, and 16 cover the featureset-function rating and the
-glued-flag redaction. They are the same on every host. A tab or
+geometry-function, token and proxy fixes, and 20 cover the featureset-function rating, the `$view`
+rating and the glued-flag redaction. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -425,7 +451,7 @@ Sources, all re-fetched on 2026-11-11:
 - [Arcade template literals](https://developers.arcgis.com/arcade/guide/template-literals/):
   introduced at version 1.11, enclosed by backticks, and "placeholders ... indicated by a dollar
   sign and curly braces". The page does not say how a backtick is escaped.
-- Arcade profile pages, each with a "Profile variables" table. `$map` is named on the
+- Arcade profile pages, each with a "Profile variables" table. `$map` and `$view` are named on the
   [popup](https://developers.arcgis.com/arcade/profiles/popup/) and
   [form calculation](https://developers.arcgis.com/arcade/profiles/form-calculation/) pages.
   `$datastore` is named on the popup, form calculation,
