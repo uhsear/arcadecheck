@@ -663,6 +663,33 @@ def count_rules(doc, with_expression=None):
     return total
 
 
+def unread_expressions(doc, path=""):
+    """Paths of values under an Arcade key that are a list or a number.
+
+    collect() reads text only, so such a value is skipped. A document that
+    holds one has an expression the tool did not read, and calling it clean
+    would be a false clean. null and booleans are left alone: they hold no
+    expression to miss.
+    """
+    found = []
+    if isinstance(doc, dict):
+        for key in doc:
+            value = doc[key]
+            child = "%s.%s" % (path, key) if path else key
+            if key.lower() in ARCADE_KEYS and (
+                    isinstance(value, list)
+                    or (isinstance(value, (int, float))
+                        and not isinstance(value, bool))):
+                found.append(child)
+            if isinstance(value, (dict, list)):
+                found.extend(unread_expressions(value, child))
+    elif isinstance(doc, list):
+        for index, value in enumerate(doc):
+            if isinstance(value, (dict, list)):
+                found.extend(unread_expressions(value, "%s[%d]" % (path, index)))
+    return found
+
+
 def unreadable(doc, records):
     """Why a document cannot be called clean, or "" when it can.
 
@@ -689,6 +716,11 @@ def unreadable(doc, records):
                     "expression key, so its shape is not the one this tool "
                     "reads" % bare)
         return ""
+    skipped = unread_expressions(doc)
+    if skipped:
+        return ("holds %d value(s) under an expression key that is not text, "
+                "first at %s, so an expression was not read"
+                % (len(skipped), skipped[0]))
     if kind != "json" or records:
         return ""
     if isinstance(doc, dict) and isinstance(doc.get("error"), dict):
@@ -885,9 +917,7 @@ WEBMAP_JSON = r"""
      {"name": "expr0", "title": "R\u00e9sum\u00e9", "returnType": "string",
       "expression": "\"R\u00e9sum\u00e9 \" + $feature.NOTE"},
      {"name": "expr1", "title": "Blank", "returnType": "string",
-      "expression": "   "},
-     {"name": "expr2", "title": "Not a string", "returnType": "number",
-      "expression": 42}
+      "expression": "   "}
     ]
    }
   }
@@ -1481,6 +1511,26 @@ def self_test():
           "an error that is not an object is just an unknown shape")
     check(unreadable({"item": 1}, [{"expression": "x"}]) == "",
           "a document of no known shape that yields an expression is read")
+    skip_doc = {"operationalLayers": [{"title": "Roads", "popupInfo": {
+        "expressionInfos": [{"name": "x",
+                             "expression": ["$feature.A + 1"]}]}}]}
+    check("first at operationalLayers[0].popupInfo.expressionInfos[0]"
+          ".expression" in unreadable(skip_doc, collect(skip_doc))
+          and collect(skip_doc) == [],
+          "an expression stored as a list is not read, so the document is "
+          "not called clean  <-- pinned defect")
+    check(unreadable({"operationalLayers": [], "a": {"valueExpression": 7},
+                      "b": [{"scriptExpression": 2.5}]}, [])
+          .startswith("holds 2 value(s) under an expression key"),
+          "a number under an Arcade key counts too, at any depth and in "
+          "any case  <-- pinned defect")
+    check(unreadable({"operationalLayers": [], "expression": None,
+                      "valueExpression": True, "x": [[1, 2], "y"]}, []) == "",
+          "null, a boolean and a list under another key hold no expression "
+          "to miss")
+    check(unreadable({"operationalLayers": [], "expression": "$feature.A + 1"},
+                     [{"expression": "x"}]) == "",
+          "text under an Arcade key is read, so nothing is skipped")
     check(unreadable({"operationalLayers": []}, []) == ""
           and unreadable({"widgets": []}, []) == ""
           and unreadable({"formInfo": {}}, []) == "",
@@ -1632,8 +1682,10 @@ def self_test():
           "nor is a key that was never arcade")
     check(not any(row["expression"] == "   " for row in rows),
           "an empty expression is not a row")
-    check(not any(row["expression"] == 42 for row in rows),
-          "nor is a number sitting where an expression should be")
+    check(collect({"expression": 42}, "n.json") == []
+          and unread_expressions({"expression": 42}) == ["expression"],
+          "a number sitting where an expression should be is not a row, but "
+          "it is reported as unread")
     check(by_name["Neighbours"]["path"]
           == "operationalLayers[0].popupInfo.expressionInfos[1].expression",
           "the path of a row is the json path it was read from")

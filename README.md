@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-643 assertions, 0 failed
+647 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 646 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 651 lines long.
 
 ## Requirements
 
@@ -194,7 +194,7 @@ Four things it refuses to be fooled by:
 
 - **Length is not portability.** Nothing in the rater can see how long an expression is. A one
   line `FeatureSetByName($datastore, "Hydrants")` is ESRI ONLY. A thirty line block of arithmetic
-  is PORTABLE. The self-test pins both, on a real geodatabase's rules as well as on made up ones.
+  is PORTABLE. The self-test pins both, on recorded output from a synthetic geodatabase as well as on made up rules.
 - **A name inside a comment or a string is not a call.** Comments and string literals are blanked
   out before anything is searched for, so `// FeatureSetByName was removed here` rates PORTABLE.
   Without that, a migration note in a comment costs somebody a week. A template literal, the
@@ -227,7 +227,7 @@ timeout and a reply that is not HTTP exit 2 with a message that has no token in 
 |---|---|
 | 0 | Every expression found is PORTABLE, in documents the tool recognised. A web map, dashboard, form or gdbxray report with no Arcade in it counts. |
 | 1 | At least one expression is PORTABLE WITH WORK or ESRI ONLY. |
-| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count is not an integer, does not match the rules read, or whose rules hold no text under `expression`. The file is named on stderr. |
+| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count is not an integer, does not match the rules read, or whose rules hold no text under `expression`, or a document with a number or a list under an Arcade key. The file is named on stderr. Any usage error that `argparse` raises, such as an unknown flag or a missing flag value, also exits 2, not 64. |
 | 64 | Usage error: no input, an `--item` with no `--portal`, a portal url with no scheme or with a user name or password in it, or `--token-stdin` with nothing on standard input. |
 
 Exit 1 is the normal answer for a real organization. It means there is work, not that the run
@@ -371,8 +371,9 @@ failed.
   page, and `TranslateText` may need AI premium services in the organization.
 - `--out` without `--apply` prints `Would write` even when the file already exists. The run with
   `--apply` then refuses with exit 2.
-- A JSON `expression` that is not a string, such as a number or a list, is skipped without a
-  word, so a document can report zero expressions and exit 0.
+- A number or a list under an `expression`, `valueExpression` or `scriptExpression` key is not
+  read, so the run exits 2 and names the first such path rather than calling the document clean.
+  A `null` or a boolean under those keys is ignored, because it holds no expression to miss.
 - Any string under an `expression`, `valueExpression` or `scriptExpression` key that is not one
   bare identifier is rated as an expression. A reference name that holds a slash, such as
   `expr/0`, would count as one if a product stores it under such a key. That was not checked.
@@ -398,26 +399,32 @@ failed.
   has, is used with the mark, so the portal refuses it and the tool exits 2. Nothing leaks.
 - A portal url that already has a query or a fragment, such as `https://host/?a=b`, gets the item
   path added after it, so the request goes to the same host with a wrong path and exits 2.
+- The guard looks only at the first character of each cell, so a CSV opened with a delimiter
+  other than a comma is not covered.
+- The `source` column holds each input file path exactly as typed, so a CSV shared outside the
+  team can reveal local folder names such as a user profile directory.
+- The claim above that Esri's REST pages describe a token in a request header comes from Esri's
+  REST documentation. This tool does not exercise it.
 - An uncaught exception anywhere ends in a traceback with exit code 1, the same code as "findings
   exist". The surrogate and deep nesting cases above are two ways to reach it.
 
 ## Verification
 
-`--self-test` is 643 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (643) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
+`--self-test` is 647 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (647) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1296 statements and 328
+Branch coverage is 100%, with no line excluded and no `pragma`: 1319 statements and 344
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-270 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+274 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
 geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the stray-word file name redaction, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: two assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
+rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the unread expression check, 4 cover the stray-word file name redaction, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: two assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
