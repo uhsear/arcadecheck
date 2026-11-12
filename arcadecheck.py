@@ -128,14 +128,17 @@ FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
 NUMBER_COLUMNS = ("chars", "lines")
 
 # A secret written into an Arcade expression is hidden in the CSV. This is a
-# pattern list, not a scanner: a named key with a value after = or :, a bearer
-# value, and the AAPK or AAPT prefix an ArcGIS API key starts with.
+# pattern list, not a scanner: a key that ends in a listed name (accessToken,
+# client_secret and DB_PASSWORD all do) with a value after = or :, a bearer
+# value, and the AAPK or AAPT prefix an ArcGIS API key starts with. A backslash
+# before a quote is allowed, so JSON written inside an Arcade string is read.
 # shortcut: a secret under any other name is not found, extend the list when
 # a real one is missed.
 SECRET_PATTERNS = (
-    (re.compile(r"(?i)(\b(?:access_token|token|api[_-]?key|client_secret|"
-                r"password|passwd|pwd|secret)[\"']?\s*[=:](?!=)\s*)"
-                r"(?:\"[^\"]*\"|'[^']*'|[^&\s\"'`)]+)"), r"\1[redacted]"),
+    (re.compile(r"(?i)((?:token|api[_-]?key|secret[_-]?key|secret|"
+                r"password|passwd|pwd)\\?[\"']?\s*[=:](?!=)\s*)"
+                r"(?:\\?\"[^\"\\]*\\?\"|\\?'[^'\\]*\\?'|"
+                r"[^&\s\"'`)\\]+)"), r"\1[redacted]"),
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/-]+=*"), r"\1[redacted]"),
     (re.compile(r"\bAAP[KT][A-Za-z0-9_.~-]{10,}"), "[redacted]"),
 )
@@ -1293,6 +1296,9 @@ def self_test():
           == PORTABLE,
           "Equals compared with plain values is PORTABLE  "
           "<-- pinned defect")
+    check(rate("Equals($feature, Buffer($feature, 5))")["rating"] == WITH_WORK,
+          "Equals with a geometry call in its arguments is PORTABLE WITH WORK  "
+          "<-- pinned defect")
     check(rate('Equals(1, "1")')["reasons"] == [],
           "Equals(1, \"1\") gives no reason  <-- pinned defect")
 
@@ -1984,6 +1990,26 @@ def self_test():
             ("Authorization: Bearer abc.DEF-123==", "Authorization: Bearer [redacted]"),
             ('var k = "AAPKabcdefghijklmnop";', 'var k = "[redacted]";'),
             ("client_secret=zzz&pwd=yyy", "client_secret=[redacted]&pwd=[redacted]"),
+            ('var accessToken = "Zq9Xw2Lk7Rt4";',
+             'var accessToken = [redacted];'),
+            ('var apiToken = "Zq9Xw2Lk7Rt4";', 'var apiToken = [redacted];'),
+            ('var clientSecret = "Zq9Xw2Lk7Rt4";',
+             'var clientSecret = [redacted];'),
+            ('var DB_PASSWORD = "Zq9Xw2Lk7Rt4";',
+             'var DB_PASSWORD = [redacted];'),
+            ("Portal('https://h/?session_token=Zq9Xw2&x=1')",
+             "Portal('https://h/?session_token=[redacted]&x=1')"),
+            ("var o = {refresh_token: 'Zq9Xw2'};",
+             "var o = {refresh_token: [redacted]};"),
+            ('var secretKey = "Zq9Xw2";', 'var secretKey = [redacted];'),
+            ('var h = "{\\"token\\":\\"SECRETabc123\\"}"; return h;',
+             'var h = "{\\"token\\":[redacted]}"; return h;'),
+            ('var h = "{\\"password\\": \\"SECRETabc123\\"}";',
+             'var h = "{\\"password\\": [redacted]}";'),
+            ("var h = '{\\'api_key\\':\\'SECRETabc123\\'}';",
+             "var h = '{\\'api_key\\':[redacted]}';"),
+            ('var secretary = "x"; var token_count = 3;',
+             'var secretary = "x"; var token_count = 3;'),
             ('if (token == "x") { return 1 }', 'if (token == "x") { return 1 }'),
             ("var tokens = 1; return $feature.A + 1",
              "var tokens = 1; return $feature.A + 1")):

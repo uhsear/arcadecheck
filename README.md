@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-660 assertions, 0 failed
+672 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 651 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 676 lines long.
 
 ## Requirements
 
@@ -283,8 +283,11 @@ failed.
 - The one assertion removed since the first release, "and argparse says which flag it was", was dropped on purpose so that a mistyped token flag is no longer echoed. The lost detail is the one the redaction bullets above describe.
 - Windows PowerShell 5 writes `>` redirects as UTF-16. The tool refuses such a file with exit code 2 and "not UTF-8 text"; save the JSON as UTF-8 first.
 - Before the CSV is written, the `expression` column is passed through `scrub`. It hides the value
-  after `token`, `access_token`, `api_key`, `client_secret`, `password`, `passwd`, `pwd` or
-  `secret` when a `=` or `:` follows, a `Bearer` value, a string that starts with `AAPK` or `AAPT`
+  after a key that ends in `token`, `api_key`, `secret_key`, `secret`, `password`, `passwd` or
+  `pwd`, in any letter case, when a `=` or `:` follows. That covers `accessToken`,
+  `refresh_token`, `clientSecret` and `DB_PASSWORD`, and JSON written inside an Arcade string,
+  where a backslash stands before each quote, such as `\"token\":\"value\"`. It also hides a
+  `Bearer` value, a string that starts with `AAPK` or `AAPT`
   (the prefix an ArcGIS API key is seen to start with; no Esri page is cited for that), and the
   portal token of the run wherever it appears. This is a short pattern list and not a secret
   scanner. A credential under another name, or split over several strings, is written as it
@@ -369,8 +372,9 @@ failed.
   name, so it rates ESRI ONLY when the name is one of the Esri-only names.
 - A JSON object that repeats a key keeps the last value, so an earlier expression under the same
   key is not collected.
-- `Equals` rates PORTABLE by name, so a call that compares two geometries is not flagged as a
-  geometry operation. The rater reads names and not arguments.
+- `Equals` rates PORTABLE by name. A call that compares two geometries held in variables, such as
+  `Equals($feature, $other)`, is not flagged as a geometry operation, because the rater reads
+  names and not arguments. A geometry call in its arguments, such as `Buffer`, does flag it.
 - A flag typo whose name holds a secret and which ends in `=value`, such as `--NAME=1`, is refused
   with the name printed and only the value hidden, so a secret typed before the `=` is shown.
 - A file name that is not valid UTF-8 (a Linux name in another code page) goes into the `source`
@@ -415,26 +419,35 @@ failed.
   team can reveal local folder names such as a user profile directory.
 - The claim above that Esri's REST pages describe a token in a request header comes from Esri's
   REST documentation. This tool does not exercise it.
+- A password in the `user:password@` part of a URL and a `Basic` authorization value are not
+  hidden in the CSV. Only a `Bearer` value is.
+- The portal token of the run is hidden in the `expression` column only, not in the `name`,
+  `layer` or `path` columns or in the on-screen report.
+- A rule or expression that is one bare word is treated as a reference name and not rated, so a
+  document that holds only such values exits 0.
+- The Python versions 3.9 and 3.10 were not run in this audit. The file parses under
+  `feature_version` 3.9, and 3.11.8, 3.12.10, 3.13.2, 3.13.7 and Ubuntu 3.12.3 gave the same
+  count.
 - An uncaught exception anywhere ends in a traceback with exit code 1, the same code as "findings
   exist". The surrogate and deep nesting cases above are two ways to reach it.
 
 ## Verification
 
-`--self-test` is 660 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (660) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
+`--self-test` is 672 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (672) on Windows under `python 3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1343 statements and 348
+Branch coverage is 100%, with no line excluded and no `pragma`: 1344 statements and 348
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-287 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+299 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
 geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the unread expression check, 4 cover the stray-word file name redaction, 13 cover the secret scrub and the object under an Arcade key, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: two assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
+rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the unread expression check, 4 cover the stray-word file name redaction, 24 cover the secret scrub and the object under an Arcade key, and 31 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: three assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -463,7 +476,7 @@ Each claim and where it was exercised:
 | An expression with an unclosed string, comment or template is never rated PORTABLE, and a call a stray quote would hide still counts | `rate` over five unclosed shapes, and `main` over two real files, which exit 1 |
 | All 14 geometry functions that were rated PORTABLE are PORTABLE WITH WORK | `rate`, one assertion per function |
 | An object under an Arcade key exits 2, never 0 | `unreadable`, `collect`, and `main` over a real file |
-| A key, token, password or bearer value written into an expression does not reach the CSV, and the rest of the expression does | `csv_row` over nine texts, the run's own token, and a real `--apply` run |
+| A key, token, password or bearer value written into an expression does not reach the CSV, and the rest of the expression does | `csv_row` over twenty texts, the run's own token, and a real `--apply` run |
 | A token can be given on standard input, and `--token` warns | `read_token`, and `main` against the loopback stub, which accepts only the right token |
 | A mistyped token flag is not echoed back | `_parse` with `--tokn=SECRET123`, `--tokenSECRET456` and `-tokenSECRET456`, checked on the captured stderr |
 | `GetFeatureSet`, `GetFeatureSetInfo` and `GdbVersion` are ESRI ONLY, and `FilterBySubtypeCode` is PORTABLE WITH WORK | `rate`, beside the other calls of each rating, and their commented and quoted twins |
@@ -485,9 +498,10 @@ Sources, all re-fetched on 2026-11-11:
   `DistanceToCoordinate`, `EnvelopeIntersects`, `IsSelfIntersecting`, `IsSimple`,
   `MeasureToCoordinate`, `NearestCoordinate`, `NearestVertex`, `PointToCoordinate`,
   `RingIsClockwise`, `SetGeometry` and `Simplify`, which this tool rates PORTABLE WITH WORK.
-  `Equals` is listed there and also under
+  `Equals` is listed there, where it compares geometries, and also under
   [Logical functions](https://developers.arcgis.com/arcade/function-reference/logical_functions/),
-  where it compares plain values, so it rates PORTABLE.
+  where it compares plain values. The rater cannot tell which one a call means, so `Equals` alone
+  rates PORTABLE and a geometry call among its arguments rates PORTABLE WITH WORK.
   `FeatureSetByName`, `FeatureSetByRelationshipName` and `FeatureSetByRelationshipClass` are
   FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function. The
   [FeatureSet functions](https://developers.arcgis.com/arcade/function-reference/featureset_functions/)
