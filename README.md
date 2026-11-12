@@ -51,7 +51,7 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-647 assertions, 0 failed
+660 assertions, 0 failed
 ```
 
 The first 14 lines and the last 10 lines of one real run, which is 651 lines long.
@@ -68,8 +68,8 @@ git clone https://github.com/uhsear/arcadecheck.git
 python arcadecheck.py --self-test
 ```
 
-`--self-test` needs no portal, no credentials and no geodatabase. It covers the rater, the four
-two collectors (`collect` and `collect_rules`), the CSV and the command line, and it reads one item through the same `urllib` code
+`--self-test` needs no portal, no credentials and no geodatabase. It covers the rater, the two
+collectors (`collect` and `collect_rules`), the CSV and the command line, and it reads one item through the same `urllib` code
 path a real portal gets, from a stand-in server on the loopback address.
 
 ## Quick start
@@ -181,7 +181,8 @@ The full list of names in each rating is at the top of the file, next to the rea
 each one. Adding to it is the intended way to extend the tool.
 
 One guard is on the output side. The CSV is the only thing this tool writes, and it is written
-only with `--apply`. Every text column goes through `guard_cell` first, when the value is a string (see Limits for
+only with `--apply`. The one exception is `--self-test`, which writes a few small files into a
+private temporary directory and deletes it before it exits. Every text column goes through `guard_cell` first, when the value is a string (see Limits for
 the one case where it is not), whatever put the text
 there: the document, the portal, the file name you passed, or a key in the JSON path. The
 six characters are the ones this tool guards. OWASP's page lists those six and also a line feed
@@ -227,7 +228,7 @@ timeout and a reply that is not HTTP exit 2 with a message that has no token in 
 |---|---|
 | 0 | Every expression found is PORTABLE, in documents the tool recognised. A web map, dashboard, form or gdbxray report with no Arcade in it counts. |
 | 1 | At least one expression is PORTABLE WITH WORK or ESRI ONLY. |
-| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count is not an integer, does not match the rules read, or whose rules hold no text under `expression`, or a document with a number or a list under an Arcade key. The file is named on stderr. Any usage error that `argparse` raises, such as an unknown flag or a missing flag value, also exits 2, not 64. |
+| 2 | A document could not be read, a portal call failed, the CSV could not be written, or the tool could not tell: a file of no known shape that yields nothing, a saved portal error, or a gdbxray report whose rule count is not an integer, does not match the rules read, or whose rules hold no text under `expression`, or a document with a number, a list or an object under an Arcade key. The file is named on stderr. Any usage error that `argparse` raises, such as an unknown flag or a missing flag value, also exits 2, not 64. |
 | 64 | Usage error: no input, an `--item` with no `--portal`, a portal url with no scheme or with a user name or password in it, or `--token-stdin` with nothing on standard input. |
 
 Exit 1 is the normal answer for a real organization. It means there is work, not that the run
@@ -281,9 +282,14 @@ failed.
 - A dashboard is recognised only when `widgets` is a top-level list. If a real Dashboards item nests its widgets, for example under a view key, it is read as generic JSON: every `expression` key is still collected, but the `where` column falls back to `expression` instead of `dashboard`.
 - The one assertion removed since the first release, "and argparse says which flag it was", was dropped on purpose so that a mistyped token flag is no longer echoed. The lost detail is the one the redaction bullets above describe.
 - Windows PowerShell 5 writes `>` redirects as UTF-16. The tool refuses such a file with exit code 2 and "not UTF-8 text"; save the JSON as UTF-8 first.
-- The CSV holds the full text of every expression, including any key, token or password written
-  into one. This tool does not scan for secrets. Treat the file as sensitive and read it before
-  you share it. The report on screen does not print expression text.
+- Before the CSV is written, the `expression` column is passed through `scrub`. It hides the value
+  after `token`, `access_token`, `api_key`, `client_secret`, `password`, `passwd`, `pwd` or
+  `secret` when a `=` or `:` follows, a `Bearer` value, a string that starts with `AAPK` or `AAPT`
+  (the prefix an ArcGIS API key is seen to start with; no Esri page is cited for that), and the
+  portal token of the run wherever it appears. This is a short pattern list and not a secret
+  scanner. A credential under another name, or split over several strings, is written as it
+  came, and so is a credential in the `name`, `layer` or `path` column. Treat the file as
+  sensitive and read it before you share it. The report on screen does not print expression text.
 - A token passed with `--token` is visible in the process list and in shell history. Use
   `--token-stdin` or `ARCADECHECK_TOKEN`. The token is sent in the query string of the request
   (`f=json&token=...`), so it also lands in the access logs of the portal, its web adaptor and any
@@ -359,6 +365,10 @@ failed.
   to the terminal as it came. An escape sequence or a carriage return in it can redraw the lines
   around it.
 - The CSV is created with the default permissions of the account, not owner only.
+- A function you define yourself in an expression, such as `function GetUser(x)`, is rated by its
+  name, so it rates ESRI ONLY when the name is one of the Esri-only names.
+- A JSON object that repeats a key keeps the last value, so an earlier expression under the same
+  key is not collected.
 - `Equals` rates PORTABLE by name, so a call that compares two geometries is not flagged as a
   geometry operation. The rater reads names and not arguments.
 - A flag typo whose name holds a secret and which ends in `=value`, such as `--NAME=1`, is refused
@@ -371,7 +381,7 @@ failed.
   page, and `TranslateText` may need AI premium services in the organization.
 - `--out` without `--apply` prints `Would write` even when the file already exists. The run with
   `--apply` then refuses with exit 2.
-- A number or a list under an `expression`, `valueExpression` or `scriptExpression` key is not
+- A number, a list or an object under an `expression`, `valueExpression` or `scriptExpression` key is not
   read, so the run exits 2 and names the first such path rather than calling the document clean.
   A `null` or a boolean under those keys is ignored, because it holds no expression to miss.
 - Any string under an `expression`, `valueExpression` or `scriptExpression` key that is not one
@@ -410,21 +420,21 @@ failed.
 
 ## Verification
 
-`--self-test` is 647 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (647) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
+`--self-test` is 660 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (660) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1319 statements and 344
+Branch coverage is 100%, with no line excluded and no `pragma`: 1343 statements and 348
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-274 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+287 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
 geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the unread expression check, 4 cover the stray-word file name redaction, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: two assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
+rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the unread expression check, 4 cover the stray-word file name redaction, 13 cover the secret scrub and the object under an Arcade key, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: two assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -451,7 +461,9 @@ Each claim and where it was exercised:
 | `FeatureSetByRelationshipClass` and `KnowledgeGraphByPortalItem` are ESRI ONLY | `rate`, beside the other esri only calls |
 | The summary names what failed | `_verdict`, which a green run cannot otherwise reach |
 | An expression with an unclosed string, comment or template is never rated PORTABLE, and a call a stray quote would hide still counts | `rate` over five unclosed shapes, and `main` over two real files, which exit 1 |
-| All 15 geometry functions that were rated PORTABLE are PORTABLE WITH WORK | `rate`, one assertion per function |
+| All 14 geometry functions that were rated PORTABLE are PORTABLE WITH WORK | `rate`, one assertion per function |
+| An object under an Arcade key exits 2, never 0 | `unreadable`, `collect`, and `main` over a real file |
+| A key, token, password or bearer value written into an expression does not reach the CSV, and the rest of the expression does | `csv_row` over nine texts, the run's own token, and a real `--apply` run |
 | A token can be given on standard input, and `--token` warns | `read_token`, and `main` against the loopback stub, which accepts only the right token |
 | A mistyped token flag is not echoed back | `_parse` with `--tokn=SECRET123`, `--tokenSECRET456` and `-tokenSECRET456`, checked on the captured stderr |
 | `GetFeatureSet`, `GetFeatureSetInfo` and `GdbVersion` are ESRI ONLY, and `FilterBySubtypeCode` is PORTABLE WITH WORK | `rate`, beside the other calls of each rating, and their commented and quoted twins |

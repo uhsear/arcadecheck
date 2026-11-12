@@ -127,6 +127,19 @@ FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
 # The columns written as numbers. A number is not text, so it is never guarded.
 NUMBER_COLUMNS = ("chars", "lines")
 
+# A secret written into an Arcade expression is hidden in the CSV. This is a
+# pattern list, not a scanner: a named key with a value after = or :, a bearer
+# value, and the AAPK or AAPT prefix an ArcGIS API key starts with.
+# shortcut: a secret under any other name is not found, extend the list when
+# a real one is missed.
+SECRET_PATTERNS = (
+    (re.compile(r"(?i)(\b(?:access_token|token|api[_-]?key|client_secret|"
+                r"password|passwd|pwd|secret)[\"']?\s*[=:](?!=)\s*)"
+                r"(?:\"[^\"]*\"|'[^']*'|[^&\s\"'`)]+)"), r"\1[redacted]"),
+    (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/-]+=*"), r"\1[redacted]"),
+    (re.compile(r"\bAAP[KT][A-Za-z0-9_.~-]{10,}"), "[redacted]"),
+)
+
 # =============================================================================
 # End of CONFIGURATION.
 # =============================================================================
@@ -664,7 +677,7 @@ def count_rules(doc, with_expression=None):
 
 
 def unread_expressions(doc, path=""):
-    """Paths of values under an Arcade key that are a list or a number.
+    """Paths of values under an Arcade key that are a list, an object or a number.
 
     collect() reads text only, so such a value is skipped. A document that
     holds one has an expression the tool did not read, and calling it clean
@@ -677,7 +690,7 @@ def unread_expressions(doc, path=""):
             value = doc[key]
             child = "%s.%s" % (path, key) if path else key
             if key.lower() in ARCADE_KEYS and (
-                    isinstance(value, list)
+                    isinstance(value, (list, dict))
                     or (isinstance(value, (int, float))
                         and not isinstance(value, bool))):
                 found.append(child)
@@ -790,9 +803,24 @@ def guard_cell(value):
     return value
 
 
-def csv_row(row):
-    """One record flattened to cells, in COLUMNS order, text cells guarded."""
+def scrub(text, token=None):
+    """text with a key, a token or a password hidden, as far as it is known.
+
+    token is the portal token of this run, hidden wherever it appears.
+    """
+    for pattern, replacement in SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return _mask(text, token)
+
+
+def csv_row(row, token=None):
+    """One record flattened to cells, in COLUMNS order, text cells guarded.
+
+    The expression is scrubbed first, so a credential written into an Arcade
+    expression does not reach the file.
+    """
     flat = dict(row)
+    flat["expression"] = scrub(row["expression"], token)
     flat["reasons"] = reason_text(row)
     flat["calls"] = ", ".join(row["calls"])
     return [flat.get(name, "") if name in NUMBER_COLUMNS
@@ -1524,6 +1552,12 @@ def self_test():
           .startswith("holds 2 value(s) under an expression key"),
           "a number under an Arcade key counts too, at any depth and in "
           "any case  <-- pinned defect")
+    check("first at a.expression" in unreadable(
+              {"operationalLayers": [], "a": {"expression": {
+                  "text": "Count(FeatureSetByName($map, 'H'))"}}}, [])
+          and collect({"expression": {"text": "x.y"}}, "d.json") == [],
+          "an object under an Arcade key is not read either, so the document "
+          "is not called clean  <-- pinned defect")
     check(unreadable({"operationalLayers": [], "expression": None,
                       "valueExpression": True, "x": [[1, 2], "y"]}, []) == "",
           "null, a boolean and a list under another key hold no expression "
@@ -1936,6 +1970,33 @@ def self_test():
             check(cell_text == expected,
                   "the %s column is guarded when it starts with %s  "
                   "<-- pinned defect" % (column, label))
+    secret_row = {"source": "s", "document": "d", "where": "w", "layer": "l",
+                  "name": "n", "rating": "r", "reasons": [], "calls": [],
+                  "chars": 1, "lines": 1, "path": "p", "expression": ""}
+    secret_column = COLUMNS.index("expression")
+    for text, shown in (
+            ('Portal("https://h/?f=json&token=AAPK-probe-456&x=1")',
+             'Portal("https://h/?f=json&token=[redacted]&x=1")'),
+            ('var password = "hunter2 is long"; return 1;',
+             'var password = [redacted]; return 1;'),
+            ("var o = {'api_key': 'k-123'};", "var o = {'api_key': [redacted]};"),
+            ('{"access_token": "abc.def"}', '{"access_token": [redacted]}'),
+            ("Authorization: Bearer abc.DEF-123==", "Authorization: Bearer [redacted]"),
+            ('var k = "AAPKabcdefghijklmnop";', 'var k = "[redacted]";'),
+            ("client_secret=zzz&pwd=yyy", "client_secret=[redacted]&pwd=[redacted]"),
+            ('if (token == "x") { return 1 }', 'if (token == "x") { return 1 }'),
+            ("var tokens = 1; return $feature.A + 1",
+             "var tokens = 1; return $feature.A + 1")):
+        secret_row["expression"] = text
+        check(csv_row(secret_row)[secret_column] == shown,
+              "a credential in an expression is hidden in the csv: %s  "
+              "<-- pinned defect" % text[:30].replace("\n", " "))
+    secret_row["expression"] = "x = TOPSECRET99; y = TOPSECRET99"
+    check(csv_row(secret_row, "TOPSECRET99")[secret_column]
+          == "x = [redacted]; y = [redacted]"
+          and csv_row(secret_row)[secret_column] == secret_row["expression"],
+          "the run's own portal token is hidden wherever it appears, and "
+          "with no token the text is left alone  <-- pinned defect")
     clean = csv_row({"source": "s", "document": "d", "where": "w",
                      "layer": "l", "name": "n", "rating": "r", "reasons": [],
                      "calls": [], "chars": 0, "lines": 1, "path": "p",
@@ -2115,6 +2176,15 @@ def self_test():
         check(code == 1 and "ESRI ONLY" in out,
               "a document whose expression hides a call behind a stray quote "
               "exits 1, not 0  <-- pinned defect")
+        with io.open("dict_expr.json", "w", encoding="utf-8") as handle:
+            handle.write(u'{"operationalLayers": [{"popupInfo": {'
+                         u'"expressionInfos": [{"name": "n", "expression": '
+                         u'{"text": "Count(FeatureSetByName($map, \'H\'))"}'
+                         u'}]}}]}')
+        code, out = capture(lambda: main(["dict_expr.json"]))
+        check(code == 2 and "not text" in out and "0 expression" not in out,
+              "a document with an object under an Arcade key exits 2, not a "
+              "clean 0  <-- pinned defect")
         code, out = capture(lambda: main(["unclosed_comment.json"]))
         check(code == 1 and "(unclosed)" in out,
               "an expression with a comment that is never closed exits 1 and "
@@ -2196,6 +2266,22 @@ def self_test():
         check("18 expression(s) in 3 document(s)" in out,
               "and the totals are added up across all three")
 
+        with io.open("secret.json", "w", encoding="utf-8") as handle:
+            handle.write(u'{"operationalLayers": [{"popupInfo": {'
+                         u'"expressionInfos": [{"name": "n", "expression": '
+                         u'"Length(Portal(\'https://h/?token=AAPK-embedded-'
+                         u'probe-456\')) + Count(FeatureSetByName($map, '
+                         u'\'H\'))"}]}}]}')
+        code, out = capture(lambda: main(["secret.json", "--out", "s.csv",
+                                          "--apply"]))
+        with io.open("s.csv", "r", encoding=CSV_ENCODING, newline="") as handle:
+            secret_csv = handle.read()
+        check(code == 1 and "embedded-probe-456" not in secret_csv
+              and "embedded-probe-456" not in out
+              and "token=[redacted]" in secret_csv
+              and "FeatureSetByName" in secret_csv,
+              "a token written inside an expression does not reach the csv, "
+              "and the rest of the expression does  <-- pinned defect")
         code, out = capture(lambda: main(["webmap.json", "--out", "x.csv"]))
         check(code == 1 and "Would write 10 row(s)" in out,
               "--out without --apply says what it would write")
@@ -2885,13 +2971,13 @@ def fetch_item(portal, item_id, token=None, insecure=False):
     return doc
 
 
-def write_csv(path, records):
+def write_csv(path, records, token=None):
     """Write the inventory. newline='' is what stops a blank line between rows."""
     with io.open(path, "w", encoding=CSV_ENCODING, newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(list(COLUMNS))
         for row in records:
-            writer.writerow(csv_row(row))
+            writer.writerow(csv_row(row, token))
 
 
 class _Parser(argparse.ArgumentParser):
@@ -3047,7 +3133,7 @@ def main(argv=None):
             return 2
         else:
             try:
-                write_csv(args.out, records)
+                write_csv(args.out, records, token)
             except (OSError, IOError) as exc:
                 emit("error: could not write %s: %s" % (args.out, exc),
                      sys.stderr)
