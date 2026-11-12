@@ -1983,6 +1983,23 @@ def self_test():
         code, out = capture(lambda: main(["nosuchfile.json"]))
         check(code == 2 and "could not read" in out,
               "a file that is not there is a read failure")
+        real_stdin = sys.stdin
+        sys.stdin = io.StringIO(u"unused-token\n")
+        try:
+            for stray in (["--token-stdin"], ["--insecure"], ["--all"]):
+                code, out = capture(
+                    lambda: main(stray + ["AAPK-stray-token-9", "nosuch.json"]))
+                check(code == 2 and "AAPK-stray-token-9" not in out
+                      and "could not read [redacted]" in out,
+                      "a token typed after %s is read as a file name and is "
+                      "not echoed  <-- pinned defect" % stray[0])
+                sys.stdin = io.StringIO(u"unused-token\n")
+        finally:
+            sys.stdin = real_stdin
+        code, out = capture(lambda: main([temp]))
+        check(code == 2 and "could not read " + temp in out,
+              "a path that exists but cannot be read is still named, so the "
+              "user can find it")
         code, out = capture(lambda: main(["broken.json"]))
         check(code == 2 and "not JSON" in out,
               "a file that is not json is a read failure")
@@ -2645,7 +2662,13 @@ def read_document(path):
         with io.open(path, "r", encoding="utf-8-sig") as handle:
             text = handle.read()
     except (OSError, IOError) as exc:
-        raise ValueError("could not read %s: %s" % (path, exc))
+        if not os.path.exists(path):
+            # A word typed after a switch that takes no value lands here, and
+            # it can be a token. A name that is not a file is never echoed.
+            raise ValueError("could not read [redacted]: no such file. If you "
+                             "typed a file name, check it. The name is hidden "
+                             "because it may be a token.")
+        raise ValueError("could not read %s: %s" % (path, exc.strerror or exc))
     except UnicodeDecodeError:
         raise ValueError("could not read %s: it is not UTF-8 text. Save it as "
                          "UTF-8 and run again." % path)

@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-608 assertions, 0 failed
+612 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 612 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 616 lines long.
 
 ## Requirements
 
@@ -291,8 +291,10 @@ failed.
   without `--insecure`, was run by hand against a local self-signed server and not in the
   self-test.
 - A word typed after a switch that takes no value, such as a token after `--token-stdin`,
-  `--insecure` or `--all`, is read as a file name and printed in the "could not read" error. Do
-  not type a token after those switches.
+  `--insecure` or `--all`, is read as a file name. If no such file exists the error says "could
+  not read [redacted]" and does not print the word, so a mistyped file name is hidden as well.
+  A word that names a file that does exist is printed. `--token-stdin` also waits for input
+  when run from a terminal, even if only files are given.
 - A non-numeric port in `--portal` is quoted back in the error message. The token itself is never
   in that text.
 - A redirect to an `ftp://` address is followed as well as `http` and `https` redirects, and the
@@ -381,21 +383,21 @@ failed.
 
 ## Verification
 
-`--self-test` is 608 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+`--self-test` is 612 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
 the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1275 statements and 320
+Branch coverage is 100%, with no line excluded and no `pragma`: 1287 statements and 324
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-235 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+239 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
 geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, and 5 cover the rule count and renamed key checks. They are the same on every host. A tab or
+rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, and 4 cover the stray-word file name redaction. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
