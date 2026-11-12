@@ -51,7 +51,7 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-642 assertions, 0 failed
+643 assertions, 0 failed
 ```
 
 The first 14 lines and the last 10 lines of one real run, which is 646 lines long.
@@ -69,7 +69,7 @@ python arcadecheck.py --self-test
 ```
 
 `--self-test` needs no portal, no credentials and no geodatabase. It covers the rater, the four
-collectors, the CSV and the command line, and it reads one item through the same `urllib` code
+two collectors (`collect` and `collect_rules`), the CSV and the command line, and it reads one item through the same `urllib` code
 path a real portal gets, from a stand-in server on the loopback address.
 
 ## Quick start
@@ -150,12 +150,13 @@ Every text cell is guarded against spreadsheet formula injection. A cell that st
 `-`, `@`, a tab or a carriage return gets one apostrophe in front, so Excel reads it as text and
 does not run it. The text comes from documents and portals you did not write: a layer title of
 `=HYPERLINK(...)` is legal, and an Arcade expression that starts with a minus sign is ordinary.
-`chars` and `lines` are numbers and are never touched. To get the original text back, drop exactly
-one leading apostrophe. This tool does not read its own CSV back, so it has no reader to change.
+`chars` and `lines` are numbers and are never touched. To get the original text back from a cell whose
+first character is an apostrophe followed by one of those characters, drop that one apostrophe;
+see Limits for the case where it is the original text. This tool does not read its own CSV back, so it has no reader to change.
 
 ## What it checks (or refuses)
 
-It collects Arcade from five places:
+It collects Arcade from six places:
 
 - **Popups.** `popupInfo.expressionInfos[]` on an operational layer or a table.
 - **Labels.** `labelExpressionInfo.expression`, which sits under `drawingInfo` beside the
@@ -358,6 +359,16 @@ failed.
   to the terminal as it came. An escape sequence or a carriage return in it can redraw the lines
   around it.
 - The CSV is created with the default permissions of the account, not owner only.
+- `Equals` rates PORTABLE by name, so a call that compares two geometries is not flagged as a
+  geometry operation. The rater reads names and not arguments.
+- A flag typo whose name holds a secret and which ends in `=value`, such as `--NAME=1`, is refused
+  with the name printed and only the value hidden, so a secret typed before the `=` is shown.
+- A file name that is not valid UTF-8 (a Linux name in another code page) goes into the `source`
+  column and has the same effect as a lone surrogate in a title: a traceback, exit code 1 and a
+  header-only CSV.
+- `TranslateText` (an AI function), `FeatureInFilter`, `TimeReceived` and `GetEnvironment` are in
+  none of the rater's lists and rate PORTABLE. Their portability was not checked against an Esri
+  page, and `TranslateText` may need AI premium services in the organization.
 - `--out` without `--apply` prints `Would write` even when the file already exists. The run with
   `--apply` then refuses with exit 2.
 - A JSON `expression` that is not a string, such as a number or a list, is skipped without a
@@ -392,21 +403,21 @@ failed.
 
 ## Verification
 
-`--self-test` is 642 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (642) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
+`--self-test` is 643 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (643) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1294 statements and 328
+Branch coverage is 100%, with no line excluded and no `pragma`: 1296 statements and 328
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-269 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+270 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
 geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the stray-word file name redaction, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. They are the same on every host. A tab or
+rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the stray-word file name redaction, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: two assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -452,9 +463,12 @@ Sources, all re-fetched on 2026-11-11:
 - [Arcade function reference](https://developers.arcgis.com/arcade/function-reference/): the
   [Geometry functions](https://developers.arcgis.com/arcade/function-reference/geometry_functions/)
   page, re-fetched on 2026-11-11, lists `Angle`, `Bearing`, `ConvertDirection`,
-  `DistanceToCoordinate`, `EnvelopeIntersects`, `Equals`, `IsSelfIntersecting`, `IsSimple`,
+  `DistanceToCoordinate`, `EnvelopeIntersects`, `IsSelfIntersecting`, `IsSimple`,
   `MeasureToCoordinate`, `NearestCoordinate`, `NearestVertex`, `PointToCoordinate`,
   `RingIsClockwise`, `SetGeometry` and `Simplify`, which this tool rates PORTABLE WITH WORK.
+  `Equals` is listed there and also under
+  [Logical functions](https://developers.arcgis.com/arcade/function-reference/logical_functions/),
+  where it compares plain values, so it rates PORTABLE.
   `FeatureSetByName`, `FeatureSetByRelationshipName` and `FeatureSetByRelationshipClass` are
   FeatureSet functions, and `KnowledgeGraphByPortalItem` is a knowledge graph function. The
   [FeatureSet functions](https://developers.arcgis.com/arcade/function-reference/featureset_functions/)
@@ -466,9 +480,10 @@ Sources, all re-fetched on 2026-11-11:
 - [Arcade template literals](https://developers.arcgis.com/arcade/guide/template-literals/):
   introduced at version 1.11, enclosed by backticks, and "placeholders ... indicated by a dollar
   sign and curly braces". The page does not say how a backtick is escaped.
-- Arcade profile pages, each with a "Profile variables" table. `$map` and `$view` are named on the
+- Arcade profile pages, each with a "Profile variables" table. `$map` is named on the
   [popup](https://developers.arcgis.com/arcade/profiles/popup/) and
   [form calculation](https://developers.arcgis.com/arcade/profiles/form-calculation/) pages.
+  `$view` is named on the popup page only, where the table says "Only supported in 2D MapViews"; the form calculation page does not name it.
   `$datastore` is named on the popup, form calculation,
   [attribute rule calculation](https://developers.arcgis.com/arcade/profiles/attribute-rule-calculation/)
   and [field calculation](https://developers.arcgis.com/arcade/profiles/field-calculation/)

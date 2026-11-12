@@ -232,7 +232,7 @@ for _name in ("intersects", "contains", "within", "touches", "crosses",
               "length3d", "centroid", "point", "polygon", "polyline",
               "multipoint", "distance", "angle", "bearing",
               "convertdirection", "distancetocoordinate",
-              "envelopeintersects", "equals", "isselfintersecting",
+              "envelopeintersects", "isselfintersecting",
               "issimple", "measuretocoordinate", "nearestcoordinate",
               "nearestvertex", "pointtocoordinate", "ringisclockwise",
               "setgeometry", "simplify"):
@@ -1222,13 +1222,21 @@ def self_test():
 
     # Esri's Arcade function reference lists these under Geometry functions.
     for name in ("Angle", "Bearing", "ConvertDirection",
-                 "DistanceToCoordinate", "EnvelopeIntersects", "Equals",
+                 "DistanceToCoordinate", "EnvelopeIntersects",
                  "IsSelfIntersecting", "IsSimple", "MeasureToCoordinate",
                  "NearestCoordinate", "NearestVertex", "PointToCoordinate",
                  "RingIsClockwise", "SetGeometry", "Simplify"):
         check(rate("return %s($feature, 1)" % name)["rating"] == WITH_WORK,
               "the geometry function %s is PORTABLE WITH WORK, not PORTABLE  "
               "<-- pinned defect" % name)
+
+    # Equals is also a Logical function that compares plain values.
+    check(rate('IIf(Equals($feature.TYPE, "MAIN"), "yes", "no")')["rating"]
+          == PORTABLE,
+          "Equals compared with plain values is PORTABLE  "
+          "<-- pinned defect")
+    check(rate('Equals(1, "1")')["reasons"] == [],
+          "Equals(1, \"1\") gives no reason  <-- pinned defect")
 
     # ---- what an expression calls
     check(find_calls("Count(x)") == ["Count"],
