@@ -198,7 +198,25 @@ ESRI_ONLY_CALLS = {
         "the cluster a drawn feature was aggregated into",
     "$targetdatastore":
         "the layers beside the target layer, which only a field mapping is given",
+    "$graph":
+        "the knowledge graph behind the feature, which only a knowledge graph "
+        "layer supplies",
+    "querygraph":
+        "queries a knowledge graph, which only ArcGIS Knowledge provides",
+    "nextsequencevalue":
+        "reads a geodatabase sequence, which only an enterprise geodatabase has",
 }
+
+# The GeoAnalytics Track functions. Esri: "GeoAnalytics Track Expressions are
+# only available when using GeoAnalytics within specific track-enabled tools."
+for _name in ("trackaccelerationat", "trackaccelerationwindow",
+              "trackcurrentacceleration", "trackcurrentdistance",
+              "trackcurrentspeed", "trackcurrenttime", "trackdistanceat",
+              "trackdistancewindow", "trackduration", "trackfieldwindow",
+              "trackgeometrywindow", "trackindex", "trackspeedat",
+              "trackspeedwindow", "trackstarttime", "trackwindow"):
+    ESRI_ONLY_CALLS[_name] = ("a GeoAnalytics track function, which only a "
+                              "track-enabled GeoAnalytics tool supplies")
 
 # What an expression calls that has an open-source equivalent, but not the same
 # call. These are the ones that turn a migration estimate into a number rather
@@ -1283,6 +1301,12 @@ def self_test():
         ("Count($featureset)", "$featureset"),
         ("Count($aggregatedfeatures)", "$aggregatedfeatures"),
         ("return $view.scale", "$view"),
+        ("Text($graph.name)", "$graph"),
+        ("Text(QueryGraph($graph, 'x'))", "QueryGraph"),
+        ("NextSequenceValue('seq')", "NextSequenceValue"),
+        ("Round(TrackCurrentSpeed($feature), 1)", "TrackCurrentSpeed"),
+        ("TrackWindow($feature)", "TrackWindow"),
+        ("TrackDuration($feature)", "TrackDuration"),
         ("var fs = GetFeatureSet($feature, 'x'); return Count(fs);",
          "GetFeatureSet"),
         ("GetFeatureSetInfo(fs).serviceUrl", "GetFeatureSetInfo"),
@@ -1294,6 +1318,12 @@ def self_test():
               "%s makes an expression esri only" % name)
         check(any(r["name"].lower() == name.lower() for r in rated["reasons"]),
               "and %s is named as the reason" % name)
+
+    tracks = [name for name in ESRI_ONLY_CALLS if name.startswith("track")]
+    check(len(tracks) == 16 and all(
+              rate("%s($feature)" % name)["rating"] == ESRI_ONLY
+              for name in tracks),
+          "all 16 Esri Track functions rate esri only  <-- pinned defect")
 
     # The twins: the same name written where it cannot run.
     for expression, name in esri:
@@ -1921,6 +1951,15 @@ def self_test():
         check(code == 2 and "SECRET456" not in out and "[redacted]" in out,
               "a flag with its value glued on, %s, is refused without "
               "quoting it back  <-- pinned defect" % glued[:2])
+    for stray in (["any.json", "--token-stdin", "SECRET789"],
+                  ["any.json", "--tokn", "SECRET789"],
+                  ["any.json", "-t", "SECRET789"],
+                  ["any.json", "--portal", "https://p", "--tokn", "SECRET789"],
+                  ["any.json", "--all", "x=SECRET789"]):
+        code, out = capture(lambda: refused(stray))
+        check(code == 2 and "SECRET789" not in out and "[redacted]" in out,
+              "a word after a file and a stray flag, %s, is refused without "
+              "quoting it back  <-- pinned defect" % " ".join(stray[1:3]))
     code, out = capture(lambda: refused(["--apply=SECRET123"]))
     check(code == 2 and "SECRET123" not in out,
           "and so is a value given to a flag that takes none  "
@@ -2808,8 +2847,8 @@ class _Parser(argparse.ArgumentParser):
         namespace, extras = self.parse_known_args(args, namespace)
         if extras:
             self.error("unrecognized arguments: %s" % " ".join(
-                arg.split("=", 1)[0] + "=[redacted]" if "=" in arg
-                else "[redacted]" if arg.startswith("-") else arg
+                arg.split("=", 1)[0] + "=[redacted]"
+                if arg.startswith("-") and "=" in arg else "[redacted]"
                 for arg in extras))
         return namespace
 

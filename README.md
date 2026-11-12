@@ -51,15 +51,15 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-612 assertions, 0 failed
+642 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 616 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 646 lines long.
 
 ## Requirements
 
-Python 3.9 or newer. Standard library only: `argparse`, `csv`, `io`, `json`, `os`, `re`, `ssl`,
-`sys` and `urllib`, with `http.server`, `runpy`, `threading`, `tempfile` and `shutil` used inside the
+Python 3.9 or newer. Standard library only: `argparse`, `csv`, `http.client`, `io`, `json`, `os`, `re`, `ssl`,
+`sys` and `urllib`, with `http.server`, `runpy`, `threading`, `tempfile`, `shutil` and `time` used inside the
 self-test. It runs on ArcGIS Pro's Python and on a plain `python3`. `arcpy` is not used and the
 `arcgis` package is not needed.
 
@@ -266,7 +266,8 @@ failed.
   ESRI ONLY rating is not confirmed. `$view` is ESRI ONLY: the popup page lists it as a
   dictionary that is "only supported in 2D MapViews", so `$view.scale` does not move as it is.
   `$camera` and `$sensor` are named on none of those pages and are not in the ESRI ONLY list, so
-  an expression that reads one of them rates PORTABLE. So do `$graph` and `$userInput`.
+  an expression that reads one of them rates PORTABLE. So does `$userInput`. `$graph` is ESRI ONLY: the popup
+  profile lists it as type KnowledgeGraph, "A knowledge graph associated with the feature".
 - The rater finds calls by pattern and does not parse Arcade. It cannot tell whether an
   expression is valid, so a string or comment that is never closed makes the rating a conservative
   one, not a certain one: see the fourth item under "Four things it refuses to be fooled by". A
@@ -276,6 +277,9 @@ failed.
   JavaScript reads it.
 - The guard covers `=`, `+`, `-`, `@`, tab and carriage return. A cell that starts with a line
   feed or a full-width `=`, `+`, `-` or `@` is written as it came, although OWASP lists those too.
+- A dashboard is recognised only when `widgets` is a top-level list. If a real Dashboards item nests its widgets, for example under a view key, it is read as generic JSON: every `expression` key is still collected, but the `where` column falls back to `expression` instead of `dashboard`.
+- The one assertion removed since the first release, "and argparse says which flag it was", was dropped on purpose so that a mistyped token flag is no longer echoed. The lost detail is the one the redaction bullets above describe.
+- Windows PowerShell 5 writes `>` redirects as UTF-16. The tool refuses such a file with exit code 2 and "not UTF-8 text"; save the JSON as UTF-8 first.
 - The CSV holds the full text of every expression, including any key, token or password written
   into one. This tool does not scan for secrets. Treat the file as sensitive and read it before
   you share it. The report on screen does not print expression text.
@@ -291,9 +295,9 @@ failed.
   without `--insecure`, was run by hand against a local self-signed server and not in the
   self-test.
 - A word typed after a switch that takes no value, such as a token after `--token-stdin`,
-  `--insecure` or `--all`, is read as a file name. If no such file exists the error says "could
+  `--insecure` or `--all`, is read as a file name when no FILE comes before it. If no such file exists the error says "could
   not read [redacted]" and does not print the word, so a mistyped file name is hidden as well.
-  A word that names a file that does exist is printed. `--token-stdin` also waits for input
+  A word that names a file that does exist is printed. When a FILE comes first, the word is left over after the switch and the usage error shows it as `[redacted]`; every leftover word is hidden that way. `--token-stdin` also waits for input
   when run from a terminal, even if only files are given.
 - A non-numeric port in `--portal` is quoted back in the error message. The token itself is never
   in that text.
@@ -303,9 +307,14 @@ failed.
   newline or space in it makes the portal refuse it.
 - The flag `--ap` is refused with exit code 2 and nothing written, but the message says
   "unrecognized arguments: [redacted]", so it does not name the flag that was mistyped.
-- Track functions such as `TrackCurrentSpeed` and `TrackWindow`, `ExecuteSQL` and `QueryGraph`
-  are in none of the rater's lists and rate PORTABLE, although they exist only in an Esri
-  profile or database.
+- The 16 Track functions (`TrackCurrentSpeed`, `TrackWindow` and the rest) rate ESRI ONLY. Esri's
+  [Track functions](https://developers.arcgis.com/arcade/function-reference/track_functions/)
+  page says they "are only available when using GeoAnalytics within specific track-enabled
+  tools". `QueryGraph` (listed under Knowledge graph functions) and `NextSequenceValue` (listed
+  under Enterprise functions) on the
+  [function reference](https://developers.arcgis.com/arcade/function-reference/) index rate
+  ESRI ONLY as well. `ExecuteSQL` is in none of the rater's lists and rates PORTABLE, although it
+  needs a database.
 - The claim that ArcGIS rewrites a layer name into a GUID when an attribute rule is saved rests
   on one recorded geodatabase and no Esri page.
 - The key locations the collectors read (`popupInfo.expressionInfos`,
@@ -383,21 +392,21 @@ failed.
 
 ## Verification
 
-`--self-test` is 612 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
+`--self-test` is 642 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (642) on Windows under `python 3.9.25`, `3.10.20`, `3.11.8`, `3.12.10`, `3.13.2` and
 `3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
-are identical apart from line endings.
+are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1287 statements and 324
+Branch coverage is 100%, with no line excluded and no `pragma`: 1294 statements and 328
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-239 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
+269 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
 false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
 geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, and 4 cover the stray-word file name redaction. They are the same on every host. A tab or
+rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the stray-word file name redaction, and 30 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
