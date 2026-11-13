@@ -137,8 +137,11 @@ NUMBER_COLUMNS = ("chars", "lines")
 SECRET_PATTERNS = (
     (re.compile(r"(?i)((?:token|api[_-]?key|secret[_-]?key|secret|"
                 r"password|passwd|pwd)\\?[\"']?\s*[=:](?!=)\s*)"
-                r"(?:\\?\"[^\"\\]*\\?\"|\\?'[^'\\]*\\?'|"
-                r"[^&\s\"'`)\\]+)"), r"\1[redacted]"),
+                r"(?:\\\"(?:[^\\]|\\\\\\\"|\\\\|\\(?![\\\"]))*\\\"|"
+                r"\\'(?:[^\\]|\\\\\\'|\\\\|\\(?![\\']))*\\'|"
+                r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|"
+                r"\\?[\"'][^\n]*|"
+                r"[^&\s\"'`)]+)"), r"\1[redacted]"),
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/-]+=*"), r"\1[redacted]"),
     (re.compile(r"\bAAP[KT][A-Za-z0-9_.~-]{10,}"), "[redacted]"),
 )
@@ -2017,6 +2020,24 @@ def self_test():
         check(csv_row(secret_row)[secret_column] == shown,
               "a credential in an expression is hidden in the csv: %s  "
               "<-- pinned defect" % text[:30].replace("\n", " "))
+    bs = chr(92)
+    for text, shown in (
+            ("password=ab" + bs + "cdSECRET", "password=[redacted]"),
+            ('{"password":"ab' + bs + '"cdSECRET"}', '{"password":[redacted]}'),
+            ("password='ab" + bs + "'SECRET'", "password=[redacted]"),
+            ("{" + bs + '"password' + bs + '":' + bs + '"x' + bs * 3
+             + '"SECRET' + bs + '"}',
+             "{" + bs + '"password' + bs + '":[redacted]}'),
+            ('var password = "abc' + bs + '"LEAKEDTAIL99"; var pwd = '
+             "'it" + bs + "'sLEAKEDTWO'; return 1;",
+             "var password = [redacted]; var pwd = [redacted]; return 1;"),
+            ('var password = "abcLEAKEDOPEN', "var password = [redacted]"),
+            ("password=" + bs + '"abcLEAKEDOPEN', "password=[redacted]")):
+        secret_row["expression"] = text
+        check(csv_row(secret_row)[secret_column] == shown,
+              "a secret holding a backslash or an escaped quote is hidden "
+              "to its end: %s  <-- pinned defect"
+              % text[:30].replace("\n", " "))
     secret_row["expression"] = "x = TOPSECRET99; y = TOPSECRET99"
     check(csv_row(secret_row, "TOPSECRET99")[secret_column]
           == "x = [redacted]; y = [redacted]"

@@ -40,7 +40,6 @@ PASS  an escaped quote does not end the literal early
 PASS  an unterminated literal swallows the rest, which is what Arcade does
 PASS  an unterminated block comment swallows the rest for the same reason
 PASS  an empty or null expression strips to the empty string
-PASS  a division is not the start of a comment  <-- pinned defect
 ...
 PASS  the self-test leaves no temporary directory behind  <-- pinned defect
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
@@ -51,10 +50,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-672 assertions, 0 failed
+679 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 676 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 683 lines long.
 
 ## Requirements
 
@@ -116,7 +115,7 @@ PORTABLE WITH WORK rules.json / rule / SnapCheck
       1  Intersects                   a geometry operation; shapely and GEOS do the same work under another name
 ```
 
-That run is a real one, against a synthetic File Geodatabase built for the self-test. `OwnerName` is one
+That run is a real one, against the synthetic `gdbxray`-format JSON fixture that the self-test carries. `OwnerName` is one
 line long and it is still ESRI ONLY.
 
 ## Usage
@@ -423,31 +422,33 @@ failed.
   hidden in the CSV. Only a `Bearer` value is.
 - The portal token of the run is hidden in the `expression` column only, not in the `name`,
   `layer` or `path` columns or in the on-screen report.
+- The secret scrub reads a quoted value with its backslash escapes, so `"ab\"cd"` is hidden to the
+  closing quote. When a quote is never closed, it hides the rest of the line. A secret written bare
+  and ending at a closing bracket, such as `abc)tail`, keeps the text after the bracket. A secret in
+  a comparison such as `apiToken == "value"` is written as it came.
+- No Excel run backs the sentence that Excel reads a guarded cell as text. The apostrophe is a
+  mitigation that OWASP names, and the self-test pins only the text of the cell.
 - A rule or expression that is one bare word is treated as a reference name and not rated, so a
   document that holds only such values exits 0.
-- The Python versions 3.9 and 3.10 were not run in this audit. The file parses under
-  `feature_version` 3.9, and 3.11.8, 3.12.10, 3.13.2, 3.13.7 and Ubuntu 3.12.3 gave the same
-  count.
+- Python 3.10 was not run. Python 3.9.25 ran the self-test green with the same count as
+  3.11.8, 3.12.10, 3.13.2, 3.13.7 and Ubuntu 3.12.3.
 - An uncaught exception anywhere ends in a traceback with exit code 1, the same code as "findings
   exist". The surrogate and deep nesting cases above are two ways to reach it.
 
 ## Verification
 
-`--self-test` is 672 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (672) on Windows under `python 3.11.8`, `3.12.10`, `3.13.2` and
-`3.13.7`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
+`--self-test` is 679 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (679) on Windows under `python 3.11.8`, `3.12.10`, `3.13.2`, `3.13.7` and
+`3.9.25`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1344 statements and 348
+Branch coverage is 100%, with no line excluded and no `pragma`: 1348 statements and 350
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-299 assertions added since the 373 before the CSV guard, 98 cover the guard, 72 cover the
-false-clean, template literal and portal-failure fixes, 40 cover the unclosed-literal,
-geometry-function, token and proxy fixes, 20 cover the featureset-function rating, the `$view`
-rating and the glued-flag redaction, 5 cover the rule count and renamed key checks, 4 cover the unread expression check, 4 cover the stray-word file name redaction, 24 cover the secret scrub and the object under an Arcade key, and 31 cover the Track, `QueryGraph`, `NextSequenceValue` and `$graph` ratings and the redaction of a stray word that follows a file name. The last one is the net of the `Equals` rating: three assertions added and one dropped from the geometry loop. They are the same on every host. A tab or
+306 assertions added since the 373 before the CSV guard, 98 cover the guard and 7 cover secrets that hold a backslash or an escaped quote. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
