@@ -127,6 +127,12 @@ FORMULA_STARTS = ("=", "+", "-", "@", "\t", "\r")
 # The columns written as numbers. A number is not text, so it is never guarded.
 NUMBER_COLUMNS = ("chars", "lines")
 
+# The text columns that come from a document or a portal and are passed through
+# scrub before they reach the CSV or the screen. reasons and calls are built
+# from the rating table and from function names, so they cannot carry a secret.
+SCRUBBED_COLUMNS = ("source", "document", "where", "layer", "name", "path",
+                    "expression")
+
 # A secret written into an Arcade expression is hidden in the CSV. This is a
 # pattern list, not a scanner: a key that ends in a listed name (accessToken,
 # client_secret and DB_PASSWORD all do) with a value after = or :, a bearer
@@ -813,8 +819,12 @@ def guard_cell(value):
 def scrub(text, token=None):
     """text with a key, a token or a password hidden, as far as it is known.
 
-    token is the portal token of this run, hidden wherever it appears.
+    token is the portal token of this run, hidden wherever it appears. A
+    value that is not text, such as a number in a gdbxray name, comes back as
+    it came.
     """
+    if not isinstance(text, str):
+        return text
     for pattern, replacement in SECRET_PATTERNS:
         text = pattern.sub(replacement, text)
     return _mask(text, token)
@@ -823,11 +833,12 @@ def scrub(text, token=None):
 def csv_row(row, token=None):
     """One record flattened to cells, in COLUMNS order, text cells guarded.
 
-    The expression is scrubbed first, so a credential written into an Arcade
-    expression does not reach the file.
+    Every text cell is scrubbed first, so a credential written into an
+    expression, a title or a file name does not reach the file.
     """
     flat = dict(row)
-    flat["expression"] = scrub(row["expression"], token)
+    for name in SCRUBBED_COLUMNS:
+        flat[name] = scrub(row[name], token)
     flat["reasons"] = reason_text(row)
     flat["calls"] = ", ".join(row["calls"])
     return [flat.get(name, "") if name in NUMBER_COLUMNS
@@ -835,19 +846,24 @@ def csv_row(row, token=None):
             for name in COLUMNS]
 
 
-def render(records, summary, show_all=False):
-    """The report as lines of text. What cannot move first, then the counts."""
+def render(records, summary, show_all=False, token=None):
+    """The report as lines of text. What cannot move first, then the counts.
+
+    The source, layer and name are scrubbed, as they are in the CSV.
+    """
     lines = ["arcadecheck: %d expression(s) in %d document(s)"
              % (summary["total"], summary["documents"]),
              "-" * 68]
     listed = [row for row in records if show_all or row["rating"] != PORTABLE]
     for row in sorted(listed, key=lambda r: (-RANK[r["rating"]], r["source"],
                                              r["path"])):
+        shown = dict((key, scrub(row[key], token))
+                     for key in ("source", "where", "name", "path", "layer"))
         lines.append("%-18s %s / %s / %s"
-                     % (row["rating"], row["source"], row["where"],
-                        row["name"] or row["path"]))
-        if row["layer"]:
-            lines.append("    layer: %s" % row["layer"])
+                     % (row["rating"], shown["source"], shown["where"],
+                        shown["name"] or shown["path"]))
+        if shown["layer"]:
+            lines.append("    layer: %s" % shown["layer"])
         for reason in row["reasons"]:
             lines.append("    %s %s" % (reason["name"], reason["why"]))
     if listed:
@@ -2073,8 +2089,8 @@ def self_test():
     check(args.show_all is False, "the report lists only what needs work")
     check(args.files == [], "no files are assumed")
     check(args.item == [], "no items are assumed")
-    check(args.portal is None and args.token is None and args.out is None,
-          "and no portal, token or output file is assumed")
+    check(args.portal is None and args.out is None,
+          "and no portal or output file is assumed")
     check(_parse(["--apply"]).apply is True, "--apply is read")
 
     def parse_prefix():
@@ -2095,11 +2111,10 @@ def self_test():
     check(_parse(["--out", "x.csv"]).out == "x.csv", "--out is read")
     check(_parse(["--portal", "https://x"]).portal == "https://x",
           "--portal is read")
-    check(_parse(["--token", "T"]).token == "T", "--token is read")
     check(_parse(["--token-stdin"]).token_stdin is True,
           "--token-stdin is read")
-    check(_parse([]).token_stdin is False and _parse([]).token is None,
-          "and neither is on by default")
+    check(_parse([]).token_stdin is False,
+          "and it is off by default")
     check(read_token(io.StringIO(u" T0K \nsecond line\n")) == "T0K",
           "the token is the first line of stdin, trimmed")
     check(read_token(io.StringIO(u"")) is None
@@ -2112,9 +2127,16 @@ def self_test():
         except SystemExit as exc:
             return exc.code
 
-    code, out = capture(lambda: refused(["--token", "AAA", "--token-stdin"]))
-    check(code == 2 and "not allowed with" in out,
-          "--token and --token-stdin together are refused")
+    for argv in (["--token", "SECRET555"], ["a.json", "--token", "SECRET555"],
+                 ["--token", "SECRET555", "a.json"], ["--token=SECRET555"],
+                 ["--token", "SECRET555", "--token-stdin"]):
+        code, out = capture(lambda: refused(argv))
+        check(code == 2 and "SECRET555" not in out and "[redacted]" in out
+              and not hasattr(_parse([]), "token"),
+              "there is no --token that takes the token itself, so %s is "
+              "refused without quoting the value back, because argv is "
+              "readable by every process on the box  <-- pinned defect"
+              % " ".join(argv[:2])[:15])
 
     code, out = capture(lambda: refused(["--tokn=SECRET123", "a.json"]))
     check(code == 2 and "--tokn" in out and "SECRET123" not in out,
@@ -2450,9 +2472,84 @@ def self_test():
               "a path that starts with a key from the document is guarded  "
               "<-- pinned defect")
 
+        leak_layer = ("Hydrants https://maps.example.test/rest/services/H/"
+                      "FeatureServer?token=TOKSECRET9876543210AB")
+        leak_name = "Label password=hunter2hunter2 here"
+        leak_doc = {"operationalLayers": [{
+            "title": leak_layer,
+            "popupInfo": {"expressionInfos": [{
+                "name": "expr0", "title": leak_name,
+                "expression": "FeatureSetByName($map, 'x')"}]}}]}
+        with io.open("leak_title.json", "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(leak_doc))
+        code, out = capture(lambda: main(["leak_title.json", "--out",
+                                          "leak.csv", "--apply"]))
+        with io.open("leak.csv", "r", encoding=CSV_ENCODING) as handle:
+            leak_text = handle.read()
+        check(code == 1 and "Wrote leak.csv" in out,
+              "a document whose titles hold a token is rated and written")
+        check("TOKSECRET9876543210AB" not in out
+              and "hunter2hunter2" not in out
+              and "token=[redacted]" in out and "password=[redacted]" in out,
+              "and neither secret in a layer or expression title reaches "
+              "stdout  <-- pinned defect")
+        check("TOKSECRET9876543210AB" not in leak_text
+              and "hunter2hunter2" not in leak_text
+              and "token=[redacted]" in leak_text
+              and "password=[redacted]" in leak_text,
+              "or the csv  <-- pinned defect")
+        leak_row = {"source": "TOKSECRET99.json", "document": "TOKSECRET99",
+                    "where": "popup", "layer": "L TOKSECRET99",
+                    "name": "N TOKSECRET99", "rating": PORTABLE,
+                    "reasons": [], "calls": [], "chars": 1, "lines": 1,
+                    "path": "P TOKSECRET99", "expression": "E TOKSECRET99"}
+        leak_cells = csv_row(leak_row, "TOKSECRET99")
+        check(all("TOKSECRET99" not in cell for cell in leak_cells
+                  if isinstance(cell, str)),
+              "the run's own token is hidden in every text cell, not in the "
+              "expression alone  <-- pinned defect")
+        leak_screen = "\n".join(render([leak_row], summarise([leak_row]),
+                                       True, "TOKSECRET99"))
+        check("TOKSECRET99" not in leak_screen
+              and "[redacted]" in leak_screen
+              and "TOKSECRET99" in "\n".join(render(
+                  [leak_row], summarise([leak_row]), True)),
+              "and on screen, where it is hidden only when the run has a "
+              "token to hide  <-- pinned defect")
+        leak_row.update(name=-5, layer=None)
+        check(csv_row(leak_row)[COLUMNS.index("name")] == -5
+              and csv_row(leak_row)[COLUMNS.index("layer")] is None,
+              "a name that is a number, not text, is written as it came")
+
+        # The scrub is a name list. These forms are written as they came, and
+        # the README Limits say so.
+        for unlisted in ('Portal("https://h/?f=json&key=PLAINKEY12345")',
+                         'cfg["password"] = "PLAINPASS12345"',
+                         'Dictionary("password", "PLAINPASS12345")',
+                         'var pw = "PLAINPASS12345"; var pass = "x"'):
+            leak_row["expression"] = unlisted
+            check(csv_row(leak_row)[COLUMNS.index("expression")] == unlisted,
+                  "a secret in a form the pattern list does not name is "
+                  "written as it came: %s" % unlisted[:24])
+        with io.open("popup_only.json", "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"popupInfo": {"expressionInfos": []}}))
+        code, out = capture(lambda: main(["popup_only.json"]))
+        check(code == 2 and "not a web map, dashboard, form or gdbxray" in out,
+              "a document that is only a popup with no Arcade exits 2")
+        check(TIMEOUT == 30,
+              "the read timeout is 30 seconds, applied to each socket read")
+
         # ---- a portal, over a real socket on the loopback address
         secret = "AAPK-self-test-token-not-a-real-one"
         served = {"webmap": WEBMAP_JSON}
+
+        def with_token(argv, token=secret):
+            """main(argv) with the token in ARCADECHECK_TOKEN, as a user would."""
+            os.environ["ARCADECHECK_TOKEN"] = token
+            try:
+                return main(argv)
+            finally:
+                del os.environ["ARCADECHECK_TOKEN"]
 
         class Handler(BaseHTTPRequestHandler):
             protocol_version = "HTTP/1.0"
@@ -2695,8 +2792,8 @@ def self_test():
                   "and the message carries neither the token nor the url  "
                   "<-- pinned defect")
 
-            code, out = capture(lambda: main(["--portal", base, "--item",
-                                              "goodmap", "--token", secret]))
+            code, out = capture(lambda: with_token(
+                ["--portal", base, "--item", "goodmap"]))
             check(code == 1,
                   "the command line reads an item out of a portal and rates it")
             check("10 expression(s) in 1 document(s)" in out,
@@ -2705,9 +2802,8 @@ def self_test():
                   "the token never reaches stdout  <-- pinned defect")
             check("goodmap" in out,
                   "the item id is used as the source name")
-            check("warning: --token is visible" in out,
-                  "a token on the command line draws a warning that does not "
-                  "repeat it")
+            check("warning" not in out,
+                  "and a token from the environment draws no warning")
 
             def via_stdin(text):
                 real_stdin = sys.stdin
@@ -2740,14 +2836,12 @@ def self_test():
                   "the token can come from the environment instead of argv")
             os.environ["ARCADECHECK_TOKEN"] = "the-wrong-token-entirely"
             try:
-                code, out = capture(lambda: main(["--portal", base, "--item",
-                                                  "goodmap", "--token",
-                                                  secret]))
+                code, out = capture(lambda: via_stdin(secret + "\n"))
             finally:
                 del os.environ["ARCADECHECK_TOKEN"]
             check(code == 1 and "10 expression(s)" in out,
-                  "a --token on the command line beats a stale one left in "
-                  "the environment  <-- pinned defect")
+                  "--token-stdin beats a stale token left in the "
+                  "environment  <-- pinned defect")
             check(secret not in out and "the-wrong-token-entirely" not in out,
                   "and neither of the two reaches stdout")
             with io.open("p.csv", "r", encoding=CSV_ENCODING) as handle:
@@ -2778,21 +2872,20 @@ def self_test():
             check(code == 2 and "404" in out,
                   "an item the portal will not give up exits 2")
             for stubbed in ("trunc", "msgint", "echoencoded", "badstatus"):
-                code, out = capture(lambda: main(
-                    ["--portal", base, "--item", stubbed, "--token", secret]))
+                code, out = capture(lambda: with_token(
+                    ["--portal", base, "--item", stubbed]))
                 check(code == 2 and "Traceback" not in out
                       and secret not in out,
                       "the %s item exits 2 with a message, not a traceback, "
                       "and no token on screen  <-- pinned defect" % stubbed)
-            code, out = capture(lambda: main(
-                ["--portal", base + "/x ", "--item", "abc", "--token",
-                 secret]))
+            code, out = capture(lambda: with_token(
+                ["--portal", base + "/x ", "--item", "abc"]))
             check(code == 64 and secret not in out
                   and "control characters" in out,
                   "a portal url with a trailing space is a usage error, and "
                   "the token is not printed  <-- pinned defect")
-            code, out = capture(lambda: main(
-                ["--portal", base, "--item", "abc\n", "--token", secret]))
+            code, out = capture(lambda: with_token(
+                ["--portal", base, "--item", "abc\n"]))
             check(code == 64 and secret not in out,
                   "an item id with a trailing newline is a usage error, and "
                   "the token is not printed  <-- pinned defect")
@@ -2953,7 +3046,7 @@ def item_url(portal, item_id):
                          "characters")
     if "@" in re.split(r"[/?#]", portal.split("//", 1)[1], maxsplit=1)[0]:
         raise ValueError("portal url must not carry a user name or password; "
-                         "give the token with --token or ARCADECHECK_TOKEN")
+                         "give the token with --token-stdin or ARCADECHECK_TOKEN")
     if not isinstance(item_id, str) or not re.fullmatch(r"[A-Za-z0-9]+",
                                                          item_id):
         raise ValueError("item id must be letters and digits")
@@ -3078,16 +3171,13 @@ def _parse(argv):
                              "https:// or http://.")
     parser.add_argument("--item", metavar="ID", action="append", default=[],
                         help="item id to read from --portal. Repeatable.")
-    secret = parser.add_mutually_exclusive_group()
-    secret.add_argument("--token", metavar="TOKEN",
-                        help="portal token. Visible in the process list and "
-                             "in shell history, so prefer --token-stdin or "
-                             "the env var ARCADECHECK_TOKEN.")
-    secret.add_argument("--token-stdin", dest="token_stdin",
+    parser.add_argument("--token-stdin", dest="token_stdin",
                         action="store_true",
                         help="read the portal token from the first line of "
                              "standard input, which keeps it out of the "
-                             "process list and shell history.")
+                             "process list and shell history. The env var "
+                             "ARCADECHECK_TOKEN works too. There is no flag "
+                             "that takes the token itself.")
     parser.add_argument("--insecure", action="store_true",
                         help="skip TLS verification, for an Enterprise portal "
                              "behind an internal CA. OFF by default.")
@@ -3140,11 +3230,7 @@ def main(argv=None):
                  "one line.", sys.stderr)
             return 64
     else:
-        token = args.token or os.environ.get("ARCADECHECK_TOKEN") or None
-        if args.token:
-            emit("warning: --token is visible in the process list and in "
-                 "shell history. Use --token-stdin or ARCADECHECK_TOKEN.",
-                 sys.stderr)
+        token = os.environ.get("ARCADECHECK_TOKEN") or None
 
     documents = []
     for path in args.files:
@@ -3174,7 +3260,7 @@ def main(argv=None):
             emit("error: %s" % problem, sys.stderr)
         return 2
     summary = summarise(records, len(documents))
-    emit("\n".join(render(records, summary, args.show_all)))
+    emit("\n".join(render(records, summary, args.show_all, token)))
 
     if args.out:
         if not args.apply:

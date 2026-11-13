@@ -20,7 +20,7 @@ does not convert anything.
 The tools people use today are the ArcGIS Online Assistant and ArcGIS Pro's Attribute Rules view.
 For one item they are the right tool. The Assistant shows an item's raw JSON, edits it in place
 and needs nothing installed. The Attribute Rules view lists every rule on a feature class with its
-expression. Both answer "what is in this thing". Neither spans popups, labels, renderers,
+expression. Both answer "what is in this thing". As far as the author could tell, neither spans popups, labels, renderers,
 dashboards, forms and attribute rules at once, and neither reads an expression and tells you it
 calls `FeatureSetByName`. That is the gap this tool fills. It does not replace them: use them to
 edit, and use this to size the job.
@@ -51,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-682 assertions, 0 failed
+697 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 686 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 701 lines long.
 
 ## Requirements
 
@@ -134,8 +134,7 @@ python arcadecheck.py --portal https://example.maps.arcgis.com --item 1a2b3c --i
 | `FILE` | none | Web map, dashboard, form or `gdbxray --json` documents. Any number of them. |
 | `--portal` | none | Portal to read items from. Must start with `https://` or `http://`. |
 | `--item` | none | Item id to read from `--portal`. Repeatable. |
-| `--token` | none | Portal token. A token on the command line is visible in the process list and in shell history, so this flag prints a warning. Prefer `--token-stdin` or the env var `ARCADECHECK_TOKEN`. |
-| `--token-stdin` | off | Read the token from the first line of standard input. It cannot be combined with `--token`. |
+| `--token-stdin` | off | Read the token from the first line of standard input. The env var `ARCADECHECK_TOKEN` works too. There is no flag that takes the token itself. |
 | `--insecure` | off | Skip TLS verification, for an Enterprise portal behind an internal CA. |
 | `--all` | off | List the portable expressions too, not only the ones that need work. |
 | `--out` | none | CSV file to write the inventory to. |
@@ -213,7 +212,8 @@ Four things it refuses to be fooled by:
 The credential rules are the same ones the rest of this portfolio uses. There is no `--password`
 flag, because `argv` is readable by every process on the machine. The token can come from the
 first line of standard input with `--token-stdin`, or from `ARCADECHECK_TOKEN`, instead of the
-command line. `--token` still works and prints a warning. A mistyped flag that carries a value in
+command line. There is no `--token` flag: it is refused like any unknown flag, with its value
+replaced by `[redacted]`, because `argv` is readable by every process and ends up in shell history. A mistyped flag that carries a value in
 one word, such as `--tokn=SECRET`, is refused with the value replaced by `[redacted]`, and a glued one with no `=`, such as `--tokenSECRET`, is refused with the whole argument replaced by `[redacted]`. A portal url with no scheme, a space or a control
 character in it, a user name or password in it (`https://user:pw@host`), and an item id with a
 trailing newline, are refused before a request is built,
@@ -254,7 +254,8 @@ failed.
   cannot be read without the geodatabase it came from. The tool reports the call; it cannot tell
   you which class the GUID is.
 - Nothing is executed. An expression that would fail at runtime rates the same as one that works.
-- The CSV is written as UTF-8 with a byte order mark, so Excel opens accented text correctly.
+- The CSV is written as UTF-8 with a byte order mark, which is meant to make Excel read accented
+  text as UTF-8. No Excel run backs that.
   A reader that does not expect the mark needs `encoding="utf-8-sig"`.
 - A guarded cell carries a leading apostrophe on disk, and a script that reads the CSV sees it.
   The tool cannot tell that apostrophe from one already in the text, when the original started
@@ -282,7 +283,9 @@ failed.
 - A dashboard is recognised only when `widgets` is a top-level list. If a real Dashboards item nests its widgets, for example under a view key, it is read as generic JSON: every `expression` key is still collected, but the `where` column falls back to `expression` instead of `dashboard`.
 - The one assertion removed since the first release, "and argparse says which flag it was", was dropped on purpose so that a mistyped token flag is no longer echoed. The lost detail is the one the redaction bullets above describe.
 - Windows PowerShell 5 writes `>` redirects as UTF-16. The tool refuses such a file with exit code 2 and "not UTF-8 text"; save the JSON as UTF-8 first.
-- Before the CSV is written, the `expression` column is passed through `scrub`. It hides the value
+- Before the CSV is written, every text column except `reasons` and `calls` (`source`,
+  `document`, `where`, `layer`, `name`, `path` and `expression`) is passed through `scrub`, and the
+  `source`, `where`, `name`, `path` and `layer` shown on screen are scrubbed the same way. It hides the value
   after a key that ends in `token`, `api_key`, `secret_key`, `secret`, `password`, `passwd` or
   `pwd`, in any letter case, when a `=` or `:` follows. That covers `accessToken`,
   `refresh_token`, `clientSecret` and `DB_PASSWORD`, and JSON written inside an Arcade string,
@@ -292,10 +295,13 @@ failed.
   (the prefix an ArcGIS API key is seen to start with; no Esri page is cited for that), and the
   portal token of the run wherever it appears. This is a short pattern list and not a secret
   scanner. A credential under another name, or split over several strings, is written as it
-  came, and so is a credential in the `name`, `layer` or `path` column. Treat the file as
-  sensitive and read it before you share it. The report on screen does not print expression text.
-- A token passed with `--token` is visible in the process list and in shell history. Use
-  `--token-stdin` or `ARCADECHECK_TOKEN`. The token is sent in the query string of the request
+  came. Treat the file as sensitive and read it before you share it. The report on screen does
+  not print expression text.
+- The scrub matches a key name followed by `=` or `:`, so a plain `key=` URL parameter, a
+  password held in a subscript or in a `Dictionary` call, and variables named `pw` or `pass`
+  are written as they came.
+- The token never comes from the command line: use `--token-stdin` or `ARCADECHECK_TOKEN`. The
+  token is sent in the query string of the request
   (`f=json&token=...`), so it also lands in the access logs of the portal, its web adaptor and any
   proxy on the way. Esri's REST pages describe a token in a request header as well; this tool
   does not use that.
@@ -324,8 +330,13 @@ failed.
   tools". `QueryGraph` (listed under Knowledge graph functions) and `NextSequenceValue` (listed
   under Enterprise functions) on the
   [function reference](https://developers.arcgis.com/arcade/function-reference/) index rate
-  ESRI ONLY as well. `ExecuteSQL` is in none of the rater's lists and rates PORTABLE, although it
-  needs a database.
+  ESRI ONLY as well. `ExecuteSQL`, `TranslateText`, `GetEnvironment`, `FeatureInFilter` and
+  `TimeReceived` are in none of the rater's lists and rate PORTABLE. Their portability was not
+  checked against an Esri page, and `ExecuteSQL` needs a database.
+- A document that is only a popup, with no Arcade in it, such as one holding an empty
+  `expressionInfos` list, exits 2 because it is not a recognised shape.
+- The 30 second timeout applies to each read, not to the whole download, so a portal that sends
+  one byte every 29 seconds can hold the run open.
 - The claim that ArcGIS rewrites a layer name into a GUID when an attribute rule is saved rests
   on one recorded geodatabase and no Esri page.
 - The key locations the collectors read are cited to the web map specification under Sources. The
@@ -421,8 +432,6 @@ failed.
   REST documentation. This tool does not exercise it.
 - A password in the `user:password@` part of a URL and a `Basic` authorization value are not
   hidden in the CSV. Only a `Bearer` value is.
-- The portal token of the run is hidden in the `expression` column only, not in the `name`,
-  `layer` or `path` columns or in the on-screen report.
 - The secret scrub reads a quoted value with its backslash escapes, so `"ab\"cd"` is hidden to the
   closing quote, and a backtick value is hidden the same way. When a quote or a backtick is never
   closed, it hides the rest of the line. A secret written bare
@@ -437,18 +446,18 @@ failed.
 
 ## Verification
 
-`--self-test` is 682 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (682) on Windows under `python 3.11.8`, `3.10.20`, `3.12.10`, `3.13.2`, `3.13.7` and
+`--self-test` is 697 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (697) on Windows under `python 3.11.8`, `3.10.20`, `3.12.10`, `3.13.2`, `3.13.7` and
 `3.9.25`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
 It also runs green with `HTTP_PROXY` set to a dead address, because the stub is read with the
 proxy settings turned off.
-Branch coverage is 100%, with no line excluded and no `pragma`: 1348 statements and 350
+Branch coverage is 100%, with no line excluded and no `pragma`: 1380 statements and 356
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-309 assertions added since the 373 before the CSV guard, 98 cover the guard and 10 cover secrets that hold a backslash, an escaped quote or a backtick. They are the same on every host. A tab or
+324 assertions added since the 373 before the CSV guard, 98 cover the guard and 10 cover secrets that hold a backslash, an escaped quote or a backtick. The rest cover the other fixes made in the review rounds. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -477,8 +486,9 @@ Each claim and where it was exercised:
 | An expression with an unclosed string, comment or template is never rated PORTABLE, and a call a stray quote would hide still counts | `rate` over five unclosed shapes, and `main` over two real files, which exit 1 |
 | All 14 geometry functions that were rated PORTABLE are PORTABLE WITH WORK | `rate`, one assertion per function |
 | An object under an Arcade key exits 2, never 0 | `unreadable`, `collect`, and `main` over a real file |
-| A key, token, password or bearer value written into an expression does not reach the CSV, and the rest of the expression does | `csv_row` over twenty texts, the run's own token, and a real `--apply` run |
-| A token can be given on standard input, and `--token` warns | `read_token`, and `main` against the loopback stub, which accepts only the right token |
+| A key, token, password or bearer value, named in the pattern list and written into an expression, does not reach the CSV, and the rest of the expression does | `csv_row` over twenty texts, the run's own token, and a real `--apply` run |
+| A token-shaped value or a password in a layer title or an expression title reaches neither stdout nor the CSV, and the run's own token is hidden in every text cell and on screen | a real `--apply` run over a synthetic document, `csv_row` and `render` |
+| A token can be given on standard input or in `ARCADECHECK_TOKEN`, and there is no `--token` flag | `read_token`, `_parse` over five spellings of `--token`, and `main` against the loopback stub, which accepts only the right token |
 | A mistyped token flag is not echoed back | `_parse` with `--tokn=SECRET123`, `--tokenSECRET456` and `-tokenSECRET456`, checked on the captured stderr |
 | `GetFeatureSet`, `GetFeatureSetInfo` and `GdbVersion` are ESRI ONLY, and `FilterBySubtypeCode` is PORTABLE WITH WORK | `rate`, beside the other calls of each rating, and their commented and quoted twins |
 | A redirect carries the token only when the portal's `Location` does | two redirect items on the loopback stub |
