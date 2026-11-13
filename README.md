@@ -40,6 +40,7 @@ PASS  an escaped quote does not end the literal early
 PASS  an unterminated literal swallows the rest, which is what Arcade does
 PASS  an unterminated block comment swallows the rest for the same reason
 PASS  an empty or null expression strips to the empty string
+PASS  a division is not the start of a comment  <-- pinned defect
 ...
 PASS  the self-test leaves no temporary directory behind  <-- pinned defect
 PASS  a console that cannot carry an accent gets it escaped rather than a traceback  <-- pinned defect
@@ -50,10 +51,10 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-679 assertions, 0 failed
+682 assertions, 0 failed
 ```
 
-The first 14 lines and the last 10 lines of one real run, which is 683 lines long.
+The first 14 lines and the last 10 lines of one real run, which is 686 lines long.
 
 ## Requirements
 
@@ -146,8 +147,8 @@ The CSV has one row per expression: `source`, `document`, `where`, `layer`, `nam
 the expression was read from, so every row can be found again in the document it came from.
 
 Every text cell is guarded against spreadsheet formula injection. A cell that starts with `=`, `+`,
-`-`, `@`, a tab or a carriage return gets one apostrophe in front, so Excel reads it as text and
-does not run it. The text comes from documents and portals you did not write: a layer title of
+`-`, `@`, a tab or a carriage return gets one apostrophe in front, the mitigation OWASP names so
+that a spreadsheet shows it as text and does not run it. The text comes from documents and portals you did not write: a layer title of
 `=HYPERLINK(...)` is legal, and an Arcade expression that starts with a minus sign is ordinary.
 `chars` and `lines` are numbers and are never touched. To get the original text back from a cell whose
 first character is an apostrophe followed by one of those characters, drop that one apostrophe;
@@ -285,7 +286,8 @@ failed.
   after a key that ends in `token`, `api_key`, `secret_key`, `secret`, `password`, `passwd` or
   `pwd`, in any letter case, when a `=` or `:` follows. That covers `accessToken`,
   `refresh_token`, `clientSecret` and `DB_PASSWORD`, and JSON written inside an Arcade string,
-  where a backslash stands before each quote, such as `\"token\":\"value\"`. It also hides a
+  where a backslash stands before each quote, such as `\"token\":\"value\"`, and a value written
+  as an Arcade template literal between backticks. It also hides a
   `Bearer` value, a string that starts with `AAPK` or `AAPT`
   (the prefix an ArcGIS API key is seen to start with; no Esri page is cited for that), and the
   portal token of the run wherever it appears. This is a short pattern list and not a secret
@@ -326,9 +328,8 @@ failed.
   needs a database.
 - The claim that ArcGIS rewrites a layer name into a GUID when an attribute rule is saved rests
   on one recorded geodatabase and no Esri page.
-- The key locations the collectors read (`popupInfo.expressionInfos`,
-  `labelExpressionInfo.expression`, `valueExpression`, `formInfo.expressionInfos`) come from
-  earlier work and are not cited to the web map specification. The dashboard shape is the same.
+- The key locations the collectors read are cited to the web map specification under Sources. The
+  dashboard shape is not cited to any Esri page.
 - A tab or a carriage return cannot be in a Windows file name, and no Microsoft page is cited for
   that. The same is true of Excel opening accented text correctly after a byte order mark.
 - The `--out` check and the write are two steps, so a file created between them is overwritten, and
@@ -423,22 +424,21 @@ failed.
 - The portal token of the run is hidden in the `expression` column only, not in the `name`,
   `layer` or `path` columns or in the on-screen report.
 - The secret scrub reads a quoted value with its backslash escapes, so `"ab\"cd"` is hidden to the
-  closing quote. When a quote is never closed, it hides the rest of the line. A secret written bare
+  closing quote, and a backtick value is hidden the same way. When a quote or a backtick is never
+  closed, it hides the rest of the line. A secret written bare
   and ending at a closing bracket, such as `abc)tail`, keeps the text after the bracket. A secret in
   a comparison such as `apiToken == "value"` is written as it came.
 - No Excel run backs the sentence that Excel reads a guarded cell as text. The apostrophe is a
   mitigation that OWASP names, and the self-test pins only the text of the cell.
 - A rule or expression that is one bare word is treated as a reference name and not rated, so a
   document that holds only such values exits 0.
-- Python 3.10 was not run. Python 3.9.25 ran the self-test green with the same count as
-  3.11.8, 3.12.10, 3.13.2, 3.13.7 and Ubuntu 3.12.3.
 - An uncaught exception anywhere ends in a traceback with exit code 1, the same code as "findings
   exist". The surrogate and deep nesting cases above are two ways to reach it.
 
 ## Verification
 
-`--self-test` is 679 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
-the same count (679) on Windows under `python 3.11.8`, `3.12.10`, `3.13.2`, `3.13.7` and
+`--self-test` is 682 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+the same count (682) on Windows under `python 3.11.8`, `3.10.20`, `3.12.10`, `3.13.2`, `3.13.7` and
 `3.9.25`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
 are identical apart from line endings. Coverage was measured on Windows 3.13.2 only, because the coverage package is not installed on the Ubuntu host.
@@ -448,7 +448,7 @@ Branch coverage is 100%, with no line excluded and no `pragma`: 1348 statements 
 branches. The self-test loads the file once with `runpy` under another name, which is the only
 way to take the false branch of the `__main__` guard, because a run as a script always takes the
 true one. `pyflakes` is clean, and `python -W error` compiles the file with no warning. Of the
-306 assertions added since the 373 before the CSV guard, 98 cover the guard and 7 cover secrets that hold a backslash or an escaped quote. They are the same on every host. A tab or
+309 assertions added since the 373 before the CSV guard, 98 cover the guard and 10 cover secrets that hold a backslash, an escaped quote or a backtick. They are the same on every host. A tab or
 a carriage return cannot be in a Windows file name, so those two are exercised through the
 document text and through `csv_row`, and the file name case uses `=evil.json`.
 
@@ -511,6 +511,20 @@ Sources, all re-fetched on 2026-11-11:
   service", `GdbVersion` as the name of the "current geodatabase version" and
   `FilterBySubtypeCode` as a feature set of the features "matching the given subtype code".
   This tool rates the first three ESRI ONLY and the last PORTABLE WITH WORK.
+- [Web map specification](https://developers.arcgis.com/web-map-specification/objects/popupInfo/),
+  re-fetched on 2026-11-12. The key locations the collectors read are on these pages:
+  [`popupInfo`](https://developers.arcgis.com/web-map-specification/objects/popupInfo/) and
+  [`formInfo`](https://developers.arcgis.com/web-map-specification/objects/formInfo/) hold
+  `expressionInfos`;
+  [`labelingInfo`](https://developers.arcgis.com/web-map-specification/objects/labelingInfo/)
+  holds `labelExpressionInfo`, which
+  [`labelExpressionInfo`](https://developers.arcgis.com/web-map-specification/objects/labelExpressionInfo/)
+  describes with an `expression` property;
+  [`uniqueValueRenderer`](https://developers.arcgis.com/web-map-specification/objects/uniqueValueRenderer/),
+  [`classBreaksRenderer`](https://developers.arcgis.com/web-map-specification/objects/classBreaksRenderer/)
+  and the
+  [`sizeInfo` visual variable](https://developers.arcgis.com/web-map-specification/objects/sizeInfo_visualVariable/)
+  hold `valueExpression`. The dashboard shape is not on any of them.
 - [Arcade template literals](https://developers.arcgis.com/arcade/guide/template-literals/):
   introduced at version 1.11, enclosed by backticks, and "placeholders ... indicated by a dollar
   sign and curly braces". The page does not say how a backtick is escaped.

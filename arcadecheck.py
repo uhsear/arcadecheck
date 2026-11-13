@@ -141,6 +141,7 @@ SECRET_PATTERNS = (
                 r"\\'(?:[^\\]|\\\\\\'|\\\\|\\(?![\\']))*\\'|"
                 r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|"
                 r"\\?[\"'][^\n]*|"
+                r"`(?:[^`\\]|\\.)*`|`[^\n]*|"
                 r"[^&\s\"'`)]+)"), r"\1[redacted]"),
     (re.compile(r"(?i)\b(bearer\s+)[A-Za-z0-9._~+/-]+=*"), r"\1[redacted]"),
     (re.compile(r"\bAAP[KT][A-Za-z0-9_.~-]{10,}"), "[redacted]"),
@@ -2032,7 +2033,12 @@ def self_test():
              "'it" + bs + "'sLEAKEDTWO'; return 1;",
              "var password = [redacted]; var pwd = [redacted]; return 1;"),
             ('var password = "abcLEAKEDOPEN', "var password = [redacted]"),
-            ("password=" + bs + '"abcLEAKEDOPEN', "password=[redacted]")):
+            ("password=" + bs + '"abcLEAKEDOPEN', "password=[redacted]"),
+            ("var token = `Zq9xK7mP2vL`; return 1;",
+             "var token = [redacted]; return 1;"),
+            ("var pwd = `ab" + bs + "`LEAKEDTAIL`; return 1;",
+             "var pwd = [redacted]; return 1;"),
+            ("var secret = `abcLEAKEDOPEN; return 1", "var secret = [redacted]")):
         secret_row["expression"] = text
         check(csv_row(secret_row)[secret_column] == shown,
               "a secret holding a backslash or an escaped quote is hidden "
