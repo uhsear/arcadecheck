@@ -434,7 +434,8 @@ failed.
   hidden in the CSV. Only a `Bearer` value is.
 - The secret scrub reads a quoted value with its backslash escapes, so `"ab\"cd"` is hidden to the
   closing quote, and a backtick value is hidden the same way. When a quote or a backtick is never
-  closed, it hides the rest of the line. A secret written bare
+  closed, it hides the rest of the line. A bare value is hidden up to the next whitespace, `&` or closing bracket, so a quote or a
+  backtick inside it does not end it. A secret written bare
   and ending at a closing bracket, such as `abc)tail`, keeps the text after the bracket. A secret in
   a comparison such as `apiToken == "value"` is written as it came.
 - No Excel run backs the sentence that Excel reads a guarded cell as text. The apostrophe is a
