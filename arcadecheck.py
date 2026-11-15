@@ -49,7 +49,7 @@ import sys
 from http.client import HTTPException
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import HTTPSHandler, ProxyHandler, build_opener
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
 # =============================================================================
 # CONFIGURATION. Deliberately not flags. Change here, not at the call site.
@@ -2547,6 +2547,7 @@ def self_test():
 
         # ---- a portal, over a real socket on the loopback address
         secret = "AAPK-self-test-token-not-a-real-one"
+        requests_seen = []
         served = {"webmap": WEBMAP_JSON}
 
         def with_token(argv, token=secret):
@@ -2573,7 +2574,9 @@ def self_test():
 
             def do_GET(self):
                 parts = urlsplit(self.path)
-                token = (parse_qs(parts.query).get("token") or [""])[0]
+                token = (self.headers.get("X-Esri-Authorization") or ""
+                         ).removeprefix("Bearer ")
+                requests_seen.append(self.requestline)
                 pieces = parts.path.strip("/").split("/")
                 item = pieces[-2] if len(pieces) > 1 else ""
                 if item == "goodmap":
@@ -2605,7 +2608,8 @@ def self_test():
                     # Hands the raw query string back as the item document, so
                     # the self-test can read what went on the wire instead of
                     # trusting that it was built right.
-                    self.send(200, json.dumps({"query": parts.query}))
+                    self.send(200, json.dumps({"query": parts.query,
+                                               "header": token}))
                 elif item == "hostilemap":
                     self.send(200, json.dumps({"operationalLayers": [{
                         "title": "=HYPERLINK(1)", "popupInfo": {
@@ -2614,10 +2618,11 @@ def self_test():
                                 "expression": "-$feature.A"}]}}]}))
                 elif item == "echoencoded":
                     # An Enterprise proxy that quotes the whole request back,
-                    # which carries the token in the form it went out in.
+                    # header included, with the token percent encoded.
                     self.send(200, json.dumps(
                         {"error": {"code": 498, "message":
-                                   "Invalid token at " + self.path}}))
+                                   "Invalid token at " + self.path + " "
+                                   + quote(token, safe="")}}))
                 elif item == "msgint":
                     self.send(200, json.dumps(
                         {"error": {"code": 498, "message": 498}}))
@@ -2712,19 +2717,22 @@ def self_test():
             check(fetch_item(base, "bounce", secret)["query"] == "",
                   "a redirect whose Location carries no query does not take "
                   "the token with it")
-            check(secret in fetch_item(base, "bouncetoken", secret)["query"],
-                  "and one whose Location carries the query does, which is "
-                  "the portal's doing and not this tool's")
+            bounced = fetch_item(base, "bouncetoken", secret)
+            check(bounced["query"] == "f=json" and bounced["header"] == "",
+                  "a redirect, even one that keeps the query, does not take "
+                  "the token with it: the header is not resent")
             awkward = "a/b+c d&e"
-            echoed = fetch_item(base, "echoquery", awkward)["query"]
-            check(echoed == "f=json&token=a%2Fb%2Bc%20d%26e",
-                  "and a token is percent encoded whole, so a slash or an "
-                  "ampersand inside one cannot split the query  "
+            echoed = fetch_item(base, "echoquery", awkward)
+            check(echoed["query"] == "f=json" and echoed["header"] == awkward,
+                  "a token goes out whole in the X-Esri-Authorization header "
+                  "and the query holds only f=json, so a slash or an "
+                  "ampersand inside one cannot split anything  "
                   "<-- pinned defect")
-            check(parse_qs(echoed)["token"] == [awkward],
-                  "which is the same token again once the portal parses it")
-            check(parse_qs(echoed)["f"] == ["json"],
-                  "and f=json is asked for, or a portal answers html")
+            fetch_item(base, "goodmap", secret)
+            check(requests_seen and not any("token=" in line.lower()
+                                            for line in requests_seen),
+                  "no request line the stub saw holds token=, so no access "
+                  "log records the token  <-- pinned defect")
 
             fetched = fetch_item(base, "goodmap", secret)
             check(detect(fetched) == "webmap",
@@ -3062,8 +3070,8 @@ def item_url(portal, item_id):
 def _mask(text, token):
     """text with the token hidden, in the raw form and the form sent on the wire.
 
-    The token goes out percent encoded, so a portal that echoes the request
-    back returns the encoded form, which a plain replace would miss.
+    The token goes out raw in a header, but a portal or proxy may echo it back
+    percent encoded, which a plain replace would miss.
     """
     for form in (token, quote(token, safe="")) if token else ():
         text = text.replace(form, "[redacted]")
@@ -3078,19 +3086,21 @@ PROXIES = None
 def fetch_item(portal, item_id, token=None, insecure=False):
     """One item's data document, read from a portal. Nothing is written.
 
-    /data is a GET endpoint, so the token travels in the query string and the
-    url itself is a secret. It is built here, used once and never returned, and
+    The token travels in the X-Esri-Authorization header, never in the url, so
+    no access log records it. It is an unredirected header, so a redirect does
+    not carry it to the new address. It is used once and never returned, and
     nothing raised out of this function carries it: a portal that quotes the
     token back inside its own error message gets that copy masked as well.
     """
     url = item_url(portal, item_id)
-    query = "f=json"
-    if token:
-        query += "&token=" + quote(token, safe="")
     try:
+        request = Request(url + "?f=json")
+        if token:
+            request.add_unredirected_header("X-Esri-Authorization",
+                                            "Bearer " + token)
         opener = build_opener(ProxyHandler(PROXIES),
                               HTTPSHandler(context=ssl_context(insecure)))
-        handle = opener.open(url + "?" + query, timeout=TIMEOUT)
+        handle = opener.open(request, timeout=TIMEOUT)
     except HTTPError as exc:
         raise ValueError("portal answered %s for item %s" % (exc.code, item_id))
     except URLError as exc:

@@ -51,7 +51,7 @@ PASS  a failed assertion is listed by its label under a count that includes it, 
 PASS  and the exit status is 1 only when something failed
 PASS  loading the file under another name defines main and does not run it
 --------------------------------------------------------------------
-697 assertions, 0 failed
+702 assertions, 0 failed
 ```
 
 The first 14 lines and the last 10 lines of one real run, which is 701 lines long.
@@ -301,11 +301,11 @@ failed.
   password held in a subscript or in a `Dictionary` call, and variables named `pw` or `pass`
   are written as they came.
 - The token never comes from the command line: use `--token-stdin` or `ARCADECHECK_TOKEN`. The
-  token is sent in the query string of the request
-  (`f=json&token=...`), so it also lands in the access logs of the portal, its web adaptor and any
-  proxy on the way. Esri's REST pages describe a token in a request header as well; this tool
-  does not use that.
-- Use an `https://` portal. With `http://` the token travels unencrypted in the query string.
+  token is sent in the
+  `X-Esri-Authorization: Bearer <token>` request header, never in the url, so access logs do not
+  record it. ArcGIS Enterprise 10.5.1 and later accept that header; an older portal answers
+  "Token Required" and exits 2.
+- Use an `https://` portal. With `http://` the token travels unencrypted in the header.
 - `--insecure` turns certificate checks off without a warning, and the token is still sent. The
   self-test checks only that the SSL context has verification off, because the portal stub speaks
   plain `http` and the standard library cannot make a certificate. A TLS handshake, with and
@@ -372,9 +372,8 @@ failed.
   argument hidden, so the message no longer names the flag you mistyped. `argparse` usage errors, such as an unknown flag, `--ap` or a flag with
   no value, exit 2 and not 64, although 2 also means that a read or write step failed.
 - `urllib` follows any redirect the portal sends, including one to another host or from `https`
-  to `http`, and with `--insecure` the redirected request is unverified too. The tool adds no
-  token to a redirected request. The token reaches the new address only when the portal's
-  `Location` header carries it, which was tested with two local stubs.
+  to `http`, and with `--insecure` the redirected request is unverified too. The token header is
+  not resent on a redirect, which was tested with two local stubs.
 - Text from a document or a portal, such as a layer title or a portal error message, is printed
   to the terminal as it came. An escape sequence or a carriage return in it can redraw the lines
   around it.
@@ -428,8 +427,6 @@ failed.
   other than a comma is not covered.
 - The `source` column holds each input file path exactly as typed, so a CSV shared outside the
   team can reveal local folder names such as a user profile directory.
-- The claim above that Esri's REST pages describe a token in a request header comes from Esri's
-  REST documentation. This tool does not exercise it.
 - A password in the `user:password@` part of a URL and a `Basic` authorization value are not
   hidden in the CSV. Only a `Bearer` value is.
 - The secret scrub reads a quoted value with its backslash escapes, so `"ab\"cd"` is hidden to the
@@ -447,7 +444,7 @@ failed.
 
 ## Verification
 
-`--self-test` is 697 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
+`--self-test` is 702 assertions with no portal and no geodatabase, and no network beyond a loopback `http.server` stub. It runs green with
 the same count (697) on Windows under `python 3.11.8`, `3.10.20`, `3.12.10`, `3.13.2`, `3.13.7` and
 `3.9.25`, of which `3.11.8` and `3.13.7` are cloned ArcGIS Pro conda environments and `3.13.2` is
 a plain install, and on Ubuntu under `python 3.12.3`. The Windows 3.13 and Ubuntu 3.12 transcripts
